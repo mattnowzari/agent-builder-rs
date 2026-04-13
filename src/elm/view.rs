@@ -3,13 +3,13 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
+    Block, Borders, Clear, FrameExt as _, List, ListItem, ListState, Paragraph, Scrollbar,
     ScrollbarOrientation, ScrollbarState, Tabs, Wrap,
 };
 
 use super::model::{
     ActivePanel, AgentEditorMode, ChatRole, ComponentsTab, CreateAgentField, CreateAgentModal,
-    CreateAgentTab, Modal, Model,
+    CreateAgentTab, ImportModal, Modal, Model,
 };
 
 const BORDER_NORMAL: Color = Color::DarkGray;
@@ -579,7 +579,7 @@ fn render_components_panel(frame: &mut Frame, model: &Model, area: Rect) {
     let style = panel_style(model.active, ActivePanel::Components);
 
     let outer_block = Block::default()
-        .title(" Components [◀▶ switch tab] ")
+        .title(" Components [◀-▶ switch tab] [i import] ")
         .borders(Borders::ALL)
         .border_style(style);
 
@@ -739,7 +739,7 @@ fn render_components_list(
         Style::default().fg(SUBTLE),
     ));
     let header = Paragraph::new(title_line);
-    
+
     if area.height < 2 {
         frame.render_widget(list, area);
         return;
@@ -831,6 +831,10 @@ fn render_modal(frame: &mut Frame, modal: &mut Modal) {
         Modal::CreateAgent(state) => {
             render_create_agent_modal(frame, state);
         }
+
+        Modal::Import(state) => {
+            render_import_modal(frame, state);
+        }
     }
 }
 
@@ -847,6 +851,60 @@ fn render_simple_modal(frame: &mut Frame, title: &str, message: &str, color: Col
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, rect);
+}
+
+fn render_import_modal(frame: &mut Frame, state: &ImportModal) {
+    let rect = centered_rect(60, 70, frame.area());
+    frame.render_widget(Clear, rect);
+
+    let type_label = match state.component_type {
+        ComponentsTab::Plugins => "Plugin",
+        ComponentsTab::Skills => "Skill",
+        ComponentsTab::Tools => "Tool",
+    };
+
+    let outer_block = Block::default()
+        .title(format!(" Import {type_label} from YAML "))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = outer_block.inner(rect);
+    frame.render_widget(outer_block, rect);
+
+    if inner.height < 4 || inner.width < 10 {
+        return;
+    }
+
+    let has_error = state.error_message.is_some();
+    let footer_height = if has_error { 3 } else { 2 };
+
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(footer_height),
+        ])
+        .split(inner);
+
+    let explorer_area = layout[0];
+    let footer_area = layout[1];
+
+    frame.render_widget_ref(state.file_explorer.widget(), explorer_area);
+
+    let mut footer_lines = Vec::new();
+    if let Some(err) = &state.error_message {
+        footer_lines.push(Line::styled(
+            err.as_str(),
+            Style::default().fg(Color::Red),
+        ));
+    }
+    footer_lines.push(Line::styled(
+        "[Enter] Select  [Esc] Cancel  [↑↓] Navigate  [←/Backspace] Up  [→/Enter] Open dir",
+        Style::default().fg(SUBTLE),
+    ));
+
+    let footer = Paragraph::new(footer_lines).wrap(Wrap { trim: false });
+    frame.render_widget(footer, footer_area);
 }
 
 fn render_create_agent_modal(frame: &mut Frame, state: &mut CreateAgentModal) {
@@ -902,7 +960,7 @@ fn render_create_agent_modal(frame: &mut Frame, state: &mut CreateAgentModal) {
     }
 
     let mut help_lines = vec![Line::from(
-        "Tab: next field | ◀▶: switch tab | Ctrl+S: save | Esc: cancel",
+        "Tab: next field | ◀-▶: switch tab | Ctrl+S: save | Esc: cancel",
     )];
     if state.submitting {
         help_lines.push(Line::styled(

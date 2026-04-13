@@ -6,8 +6,8 @@ mod view;
 
 pub use cmd::Cmd;
 pub use model::{
-    ActivePanel, AgentEditorMode, ChatEntry, ChatRole, ChatSession, ConfirmDeleteAgentModal,
-    CreateAgentModal, CreateAgentTab, Modal, Model,
+    ActivePanel, AgentEditorMode, ChatEntry, ChatRole, ChatSession, ComponentsTab,
+    ConfirmDeleteAgentModal, CreateAgentModal, CreateAgentTab, ImportModal, Modal, Model,
 };
 pub use msg::Msg;
 pub use update::update;

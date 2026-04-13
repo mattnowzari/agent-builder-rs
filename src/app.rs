@@ -454,6 +454,77 @@ fn execute_cmd(
             });
         }
 
+        Cmd::ImportComponentFromFile {
+            path,
+            component_type,
+        } => {
+            let cfg = model.config.clone();
+            rt.spawn(async move {
+                use crate::elm::ComponentsTab;
+
+                match component_type {
+                    ComponentsTab::Tools => {
+                        let contents = match tokio::fs::read_to_string(&path).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                let _ = tx.send(Msg::ToolCreateFromFileFailed {
+                                    error: format!("Failed to read file: {e}"),
+                                });
+                                return;
+                            }
+                        };
+
+                        let req = match crate::agentbuilder::parse_tool_yaml(&contents) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                let _ = tx.send(Msg::ToolCreateFromFileFailed {
+                                    error: format!("YAML parse error: {e}"),
+                                });
+                                return;
+                            }
+                        };
+
+                        if !cfg.is_ready() {
+                            let _ = tx.send(Msg::ToolCreateFromFileFailed {
+                                error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
+                            });
+                            return;
+                        }
+                        let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                let _ = tx.send(Msg::ToolCreateFromFileFailed {
+                                    error: e.to_string(),
+                                });
+                                return;
+                            }
+                        };
+
+                        match client.create_tool(&req).await {
+                            Ok(tool) => {
+                                let _ = tx.send(Msg::ToolCreatedFromFile { tool });
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Msg::ToolCreateFromFileFailed {
+                                    error: e.to_string(),
+                                });
+                            }
+                        }
+                    }
+                    ComponentsTab::Skills => {
+                        let _ = tx.send(Msg::ToolCreateFromFileFailed {
+                            error: "Skill import from YAML is not yet implemented.".to_string(),
+                        });
+                    }
+                    ComponentsTab::Plugins => {
+                        let _ = tx.send(Msg::ToolCreateFromFileFailed {
+                            error: "Plugin import from YAML is not yet implemented.".to_string(),
+                        });
+                    }
+                }
+            });
+        }
+
         Cmd::DeleteAgent { id } => {
             let cfg = model.config.clone();
             let agent_name = model

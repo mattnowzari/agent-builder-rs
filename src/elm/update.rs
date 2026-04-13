@@ -1,10 +1,15 @@
 use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseEventKind};
 use ratatui::widgets::ListState;
 
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::{Block, Borders};
+use ratatui_explorer::{FileExplorerBuilder, Theme};
+
 use super::cmd::Cmd;
 use super::model::{
-    ActivePanel, AgentEditorMode, ChatEntry, ChatRole, ChatSession, ConfirmDeleteAgentModal,
-    CreateAgentField, CreateAgentModal, CreateAgentTab, Modal, Model,
+    ActivePanel, AgentEditorMode, ChatEntry, ChatRole, ChatSession, ComponentsTab,
+    ConfirmDeleteAgentModal, CreateAgentField, CreateAgentModal, CreateAgentTab, ImportModal, Modal,
+    Model,
 };
 use super::msg::Msg;
 use super::view::filtered_session_indices;
@@ -275,6 +280,26 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         Msg::AgentDeleteFailed { error } => {
             model.modal = Some(Modal::Error {
                 title: "Delete failed".to_string(),
+                message: error,
+            });
+            vec![]
+        }
+
+        // -- Import from file --
+        Msg::ToolCreatedFromFile { tool } => {
+            model.modal = Some(Modal::Info {
+                title: "Tool Imported".to_string(),
+                message: format!("Successfully created tool: {} ({})", tool.id, tool.tool_type),
+            });
+            model.components_tools_loading = true;
+            model.components_skills_loading = true;
+            model.components_plugins_loading = true;
+            vec![Cmd::LoadComponentsData]
+        }
+
+        Msg::ToolCreateFromFileFailed { error } => {
+            model.modal = Some(Modal::Error {
+                title: "Import Failed".to_string(),
                 message: error,
             });
             vec![]
@@ -711,8 +736,6 @@ fn handle_components_panel_key(
     model: &mut Model,
     key: ratatui::crossterm::event::KeyEvent,
 ) -> Option<Vec<Cmd>> {
-    use super::model::ComponentsTab;
-
     const TAB_ORDER: [ComponentsTab; 3] = [
         ComponentsTab::Plugins,
         ComponentsTab::Skills,
@@ -733,6 +756,43 @@ fn handle_components_panel_key(
                 && pos + 1 < TAB_ORDER.len()
             {
                 model.components_tab = TAB_ORDER[pos + 1];
+            }
+            Some(vec![])
+        }
+        KeyCode::Char('i') => {
+            let theme = Theme::default()
+                .add_default_title()
+                .with_block(Block::default().borders(Borders::NONE))
+                .with_item_style(Style::default().fg(Color::White))
+                .with_dir_style(Style::default().fg(Color::Cyan))
+                .with_highlight_item_style(
+                    Style::default()
+                        .fg(Color::White)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .with_highlight_dir_style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .with_highlight_symbol("▶ ");
+
+            match FileExplorerBuilder::build_with_theme(theme) {
+                Ok(fe) => {
+                    model.modal = Some(Modal::Import(Box::new(ImportModal {
+                        file_explorer: fe,
+                        component_type: model.components_tab,
+                        error_message: None,
+                    })));
+                }
+                Err(e) => {
+                    model.modal = Some(Modal::Error {
+                        title: "Import Error".to_string(),
+                        message: format!("Failed to open file explorer: {e}"),
+                    });
+                }
             }
             Some(vec![])
         }
@@ -776,6 +836,46 @@ fn update_modal_key(model: &mut Model, key: ratatui::crossterm::event::KeyEvent)
                     id: state.agent_id.clone(),
                 }];
             }
+            vec![]
+        }
+
+        Modal::Import(state) => {
+            if key.code == KeyCode::Esc {
+                model.modal = None;
+                return vec![];
+            }
+
+            if key.code == KeyCode::Enter {
+                let selected = state.file_explorer.current().clone();
+                if selected.is_file() {
+                    let path = &selected.path;
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("");
+                    if ext == "yaml" || ext == "yml" {
+                        let path_str = path.to_string_lossy().to_string();
+                        let component_type = state.component_type;
+                        model.modal = None;
+                        return vec![Cmd::ImportComponentFromFile {
+                            path: path_str,
+                            component_type,
+                        }];
+                    } else {
+                        state.error_message =
+                            Some("Only .yaml/.yml files are allowed.".to_string());
+                        return vec![];
+                    }
+                }
+            }
+
+            if matches!(key.code, KeyCode::Left | KeyCode::Right) {
+                return vec![];
+            }
+
+            state.error_message = None;
+            let event = ratatui::crossterm::event::Event::Key(key);
+            let _ = state.file_explorer.handle(&event);
             vec![]
         }
     }

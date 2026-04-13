@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -364,6 +366,27 @@ impl AgentBuilderClient {
         let v: serde_json::Value = serde_json::from_str(&text)
             .context("failed to parse get conversation response JSON")?;
         parse_conversation_detail(v, text).context("failed to parse conversation detail")
+    }
+
+    pub async fn create_tool(&self, req: &CreateToolRequest) -> Result<ToolSummary> {
+        let url = self.api_url("tools");
+        let resp = self
+            .http
+            .post(url)
+            .json(req)
+            .send()
+            .await
+            .context("failed to send create tool request")?;
+
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("Agent Builder API error {status}: {text}");
+        }
+
+        let tool: ToolSummary =
+            serde_json::from_str(&text).context("failed to parse create tool response")?;
+        Ok(tool)
     }
 
     pub async fn delete_agent(&self, id: &str) -> Result<()> {
@@ -822,4 +845,170 @@ struct CreateAgentResponse {
     id: String,
     name: String,
     description: String,
+}
+
+// ---------------------------------------------------------------------------
+// YAML tool loading
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct ToolYaml {
+    id: String,
+    #[serde(rename = "type")]
+    tool_type: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(flatten)]
+    extra: HashMap<String, serde_yaml::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EsqlParamYaml {
+    #[serde(rename = "type")]
+    param_type: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    optional: bool,
+    #[serde(default)]
+    default_value: Option<serde_yaml::Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateToolRequest {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    pub configuration: serde_json::Value,
+}
+
+pub fn parse_tool_yaml(contents: &str) -> Result<CreateToolRequest> {
+    let yaml: ToolYaml =
+        serde_yaml::from_str(contents).context("failed to parse YAML tool definition")?;
+
+    let configuration = match yaml.tool_type.as_str() {
+        "esql" => build_esql_config(&yaml)?,
+        "index_search" => build_index_search_config(&yaml)?,
+        "workflow" => build_workflow_config(&yaml)?,
+        other => anyhow::bail!("unsupported tool type: {other} (expected esql, index_search, or workflow)"),
+    };
+
+    Ok(CreateToolRequest {
+        id: yaml.id,
+        tool_type: yaml.tool_type,
+        description: yaml.description,
+        tags: yaml.tags,
+        configuration,
+    })
+}
+
+fn yaml_val_to_json(v: &serde_yaml::Value) -> serde_json::Value {
+    match v {
+        serde_yaml::Value::Null => serde_json::Value::Null,
+        serde_yaml::Value::Bool(b) => serde_json::Value::Bool(*b),
+        serde_yaml::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                serde_json::Value::Number(i.into())
+            } else if let Some(f) = n.as_f64() {
+                serde_json::Number::from_f64(f)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
+            } else {
+                serde_json::Value::Null
+            }
+        }
+        serde_yaml::Value::String(s) => serde_json::Value::String(s.clone()),
+        serde_yaml::Value::Sequence(seq) => {
+            serde_json::Value::Array(seq.iter().map(yaml_val_to_json).collect())
+        }
+        serde_yaml::Value::Mapping(map) => {
+            let obj: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .filter_map(|(k, v)| k.as_str().map(|s| (s.to_string(), yaml_val_to_json(v))))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        serde_yaml::Value::Tagged(t) => yaml_val_to_json(&t.value),
+    }
+}
+
+fn build_esql_config(yaml: &ToolYaml) -> Result<serde_json::Value> {
+    let query = yaml
+        .extra
+        .get("query")
+        .and_then(|v| v.as_str())
+        .context("esql tool requires a 'query' field")?
+        .to_string();
+
+    let mut config = serde_json::json!({ "query": query });
+
+    if let Some(params_val) = yaml.extra.get("params") {
+        let params_map: HashMap<String, EsqlParamYaml> = serde_yaml::from_value(params_val.clone())
+            .context("failed to parse 'params' in esql tool")?;
+
+        let mut json_params = serde_json::Map::new();
+        for (name, param) in &params_map {
+            let mut p = serde_json::Map::new();
+            p.insert("type".to_string(), serde_json::Value::String(param.param_type.clone()));
+            if !param.description.is_empty() {
+                p.insert("description".to_string(), serde_json::Value::String(param.description.clone()));
+            }
+            if param.optional {
+                p.insert("optional".to_string(), serde_json::Value::Bool(true));
+            }
+            if let Some(dv) = &param.default_value {
+                p.insert("defaultValue".to_string(), yaml_val_to_json(dv));
+            }
+            json_params.insert(name.clone(), serde_json::Value::Object(p));
+        }
+        config["params"] = serde_json::Value::Object(json_params);
+    }
+
+    Ok(config)
+}
+
+fn build_index_search_config(yaml: &ToolYaml) -> Result<serde_json::Value> {
+    let pattern = yaml
+        .extra
+        .get("pattern")
+        .and_then(|v| v.as_str())
+        .context("index_search tool requires a 'pattern' field")?
+        .to_string();
+
+    let mut config = serde_json::json!({ "pattern": pattern });
+
+    if let Some(rl) = yaml.extra.get("row_limit") {
+        config["row_limit"] = yaml_val_to_json(rl);
+    }
+    if let Some(ci) = yaml.extra.get("custom_instructions") {
+        config["custom_instructions"] = yaml_val_to_json(ci);
+    }
+
+    Ok(config)
+}
+
+fn build_workflow_config(yaml: &ToolYaml) -> Result<serde_json::Value> {
+    let workflow_id = yaml
+        .extra
+        .get("workflow_id")
+        .and_then(|v| v.as_str())
+        .context("workflow tool requires a 'workflow_id' field")?
+        .to_string();
+
+    let wait = yaml
+        .extra
+        .get("wait_for_completion")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    Ok(serde_json::json!({
+        "workflow_id": workflow_id,
+        "wait_for_completion": wait,
+    }))
 }

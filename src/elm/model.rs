@@ -1,4 +1,5 @@
 use ratatui::widgets::ListState;
+use ratatui_explorer::FileExplorer;
 
 use crate::agentbuilder::{AgentSummary, PluginSummary, SkillSummary, ToolSummary};
 use crate::config::Config;
@@ -114,13 +115,32 @@ impl Model {
 
 // -- Modals --
 
-#[derive(Debug, Clone)]
 pub enum Modal {
     MissingEnv { missing: Vec<&'static str> },
     Info { title: String, message: String },
     Error { title: String, message: String },
     CreateAgent(Box<CreateAgentModal>),
     ConfirmDeleteAgent(ConfirmDeleteAgentModal),
+    Import(Box<ImportModal>),
+}
+
+impl std::fmt::Debug for Modal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingEnv { missing } => f.debug_struct("MissingEnv").field("missing", missing).finish(),
+            Self::Info { title, .. } => f.debug_struct("Info").field("title", title).finish(),
+            Self::Error { title, .. } => f.debug_struct("Error").field("title", title).finish(),
+            Self::CreateAgent(_) => f.debug_tuple("CreateAgent").finish(),
+            Self::ConfirmDeleteAgent(s) => f.debug_tuple("ConfirmDeleteAgent").field(s).finish(),
+            Self::Import(_) => f.debug_tuple("Import").finish(),
+        }
+    }
+}
+
+pub struct ImportModal {
+    pub file_explorer: FileExplorer,
+    pub component_type: ComponentsTab,
+    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Clone)]

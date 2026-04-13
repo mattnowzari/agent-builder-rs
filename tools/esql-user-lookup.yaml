@@ -1,0 +1,22 @@
+id: esql-user-lookup
+type: esql
+description: "Look up users by email domain and return recent login activity"
+tags:
+  - users
+  - security
+  - identity
+query: |
+  FROM logs-system.auth-*
+  | WHERE user.email LIKE ?domain
+  | STATS login_count = COUNT(*), last_seen = MAX(@timestamp) BY user.name
+  | SORT last_seen DESC
+  | LIMIT ?max_results
+params:
+  domain:
+    type: string
+    description: "Email domain pattern to filter by (e.g. *@elastic.co)"
+  max_results:
+    type: integer
+    description: "Maximum number of users to return"
+    optional: true
+    default_value: 25

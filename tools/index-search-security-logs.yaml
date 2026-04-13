@@ -1,0 +1,13 @@
+id: index-search-security-logs
+type: index_search
+description: "Search security event logs for suspicious authentication activity"
+tags:
+  - security
+  - logs
+  - authentication
+pattern: "logs-security.*"
+row_limit: 100
+custom_instructions: |
+  Focus on failed authentication attempts and privilege escalation events.
+  Prioritize entries from the last 24 hours.
+  Group results by source IP when possible.

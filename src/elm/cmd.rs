@@ -1,3 +1,5 @@
+use super::model::ComponentsTab;
+
 #[derive(Debug, Clone)]
 pub enum Cmd {
     LoadEnv,
@@ -20,4 +22,8 @@ pub enum Cmd {
         plugin_ids: Vec<String>,
     },
     DeleteAgent { id: String },
+    ImportComponentFromFile {
+        path: String,
+        component_type: ComponentsTab,
+    },
 }

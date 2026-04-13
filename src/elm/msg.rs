@@ -53,6 +53,10 @@ pub enum Msg {
     AgentDeleted { id: String, name: String },
     AgentDeleteFailed { error: String },
 
+    // -- Import from file --
+    ToolCreatedFromFile { tool: ToolSummary },
+    ToolCreateFromFileFailed { error: String },
+
     // -- Chat --
     PromptResponseReceived { content: String, conversation_id: Option<String> },
     PromptResponseFailed { error: String },

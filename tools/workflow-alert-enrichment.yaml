@@ -1,0 +1,9 @@
+id: workflow-alert-enrichment
+type: workflow
+description: "Enrich security alerts with threat intel and asset context"
+tags:
+  - security
+  - automation
+  - alerts
+workflow_id: "enrich-security-alerts"
+wait_for_completion: true
