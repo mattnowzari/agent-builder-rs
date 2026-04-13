@@ -245,6 +245,99 @@ fn execute_cmd(
             });
         }
 
+        Cmd::LoadSkills => {
+            let cfg = model.config.clone();
+            rt.spawn(async move {
+                if !cfg.is_ready() {
+                    let _ = tx.send(Msg::SkillsLoadFailed {
+                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
+                    });
+                    return;
+                }
+                let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(Msg::SkillsLoadFailed {
+                            error: e.to_string(),
+                        });
+                        return;
+                    }
+                };
+                match client.list_skills().await {
+                    Ok(skills) => {
+                        let _ = tx.send(Msg::SkillsLoaded { skills });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Msg::SkillsLoadFailed {
+                            error: e.to_string(),
+                        });
+                    }
+                }
+            });
+        }
+
+        Cmd::LoadPlugins => {
+            let cfg = model.config.clone();
+            rt.spawn(async move {
+                if !cfg.is_ready() {
+                    let _ = tx.send(Msg::PluginsLoadFailed {
+                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
+                    });
+                    return;
+                }
+                let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(Msg::PluginsLoadFailed {
+                            error: e.to_string(),
+                        });
+                        return;
+                    }
+                };
+                match client.list_plugins().await {
+                    Ok(plugins) => {
+                        let _ = tx.send(Msg::PluginsLoaded { plugins });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Msg::PluginsLoadFailed {
+                            error: e.to_string(),
+                        });
+                    }
+                }
+            });
+        }
+
+        Cmd::LoadComponentsData => {
+            let cfg = model.config.clone();
+            rt.spawn(async move {
+                if !cfg.is_ready() {
+                    let _ = tx.send(Msg::ComponentsDataFailed {
+                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
+                    });
+                    return;
+                }
+                let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(Msg::ComponentsDataFailed {
+                            error: e.to_string(),
+                        });
+                        return;
+                    }
+                };
+
+                let tools = client.list_tools().await.unwrap_or_default();
+                let skills = client.list_skills().await.unwrap_or_default();
+                let plugins = client.list_plugins().await.unwrap_or_default();
+
+                let _ = tx.send(Msg::ComponentsDataLoaded {
+                    tools,
+                    skills,
+                    plugins,
+                });
+            });
+        }
+
         Cmd::SendPrompt { text } => {
             let cfg = model.config.clone();
             let conversation_id = model
@@ -289,6 +382,8 @@ fn execute_cmd(
             description,
             instructions,
             tool_ids,
+            skill_ids,
+            plugin_ids,
         } => {
             let cfg = model.config.clone();
             rt.spawn(async move {
@@ -313,6 +408,8 @@ fn execute_cmd(
                 let config = crate::agentbuilder::AgentConfiguration {
                     instructions: Some(instructions),
                     tools: vec![crate::agentbuilder::AgentTools { tool_ids }],
+                    skill_ids,
+                    plugin_ids,
                 };
 
                 let res = if is_edit {

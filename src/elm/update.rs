@@ -50,6 +50,12 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 return cmds;
             }
 
+            if model.active == ActivePanel::Components
+                && let Some(cmds) = handle_components_panel_key(model, key)
+            {
+                return cmds;
+            }
+
             match key.code {
                 KeyCode::Char('q') if key.modifiers.is_empty() => {
                     model.should_quit = true;
@@ -58,16 +64,16 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                     model.active = match model.active {
                         ActivePanel::Agents => ActivePanel::Chats,
                         ActivePanel::Chats => ActivePanel::Chat,
-                        ActivePanel::Chat => ActivePanel::Details,
-                        ActivePanel::Details => ActivePanel::Agents,
+                        ActivePanel::Chat => ActivePanel::Components,
+                        ActivePanel::Components => ActivePanel::Agents,
                     };
                 }
                 KeyCode::BackTab => {
                     model.active = match model.active {
-                        ActivePanel::Agents => ActivePanel::Details,
+                        ActivePanel::Agents => ActivePanel::Components,
                         ActivePanel::Chats => ActivePanel::Agents,
                         ActivePanel::Chat => ActivePanel::Chats,
-                        ActivePanel::Details => ActivePanel::Chat,
+                        ActivePanel::Components => ActivePanel::Chat,
                     };
                 }
                 _ => {}
@@ -86,7 +92,10 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 return vec![];
             }
             model.agents_loading = true;
-            vec![Cmd::LoadAgents]
+            model.components_tools_loading = true;
+            model.components_skills_loading = true;
+            model.components_plugins_loading = true;
+            vec![Cmd::LoadAgents, Cmd::LoadComponentsData]
         }
 
         // -- Agents --
@@ -139,6 +148,74 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 state.tools_loading = false;
                 state.tools_error = Some(error);
             }
+            vec![]
+        }
+
+        Msg::SkillsLoaded { skills } => {
+            if let Some(Modal::CreateAgent(state)) = &mut model.modal {
+                state.skills_loading = false;
+                state.skills_error = None;
+                let valid_ids: Vec<String> = skills.iter().map(|s| s.id.clone()).collect();
+                state.selected_skill_ids.retain(|id| valid_ids.contains(id));
+                state.skills = skills;
+            }
+            vec![]
+        }
+
+        Msg::SkillsLoadFailed { error } => {
+            if let Some(Modal::CreateAgent(state)) = &mut model.modal {
+                state.skills_loading = false;
+                state.skills_error = Some(error);
+            }
+            vec![]
+        }
+
+        Msg::PluginsLoaded { plugins } => {
+            if let Some(Modal::CreateAgent(state)) = &mut model.modal {
+                state.plugins_loading = false;
+                state.plugins_error = None;
+                let valid_ids: Vec<String> = plugins.iter().map(|p| p.id.clone()).collect();
+                state
+                    .selected_plugin_ids
+                    .retain(|id| valid_ids.contains(id));
+                state.plugins = plugins;
+            }
+            vec![]
+        }
+
+        Msg::PluginsLoadFailed { error } => {
+            if let Some(Modal::CreateAgent(state)) = &mut model.modal {
+                state.plugins_loading = false;
+                state.plugins_error = Some(error);
+            }
+            vec![]
+        }
+
+        // -- Components panel data --
+        Msg::ComponentsDataLoaded {
+            tools,
+            skills,
+            plugins,
+        } => {
+            model.components_tools_loading = false;
+            model.components_skills_loading = false;
+            model.components_plugins_loading = false;
+            model.components_tools_error = None;
+            model.components_skills_error = None;
+            model.components_plugins_error = None;
+            model.components_tools = tools;
+            model.components_skills = skills;
+            model.components_plugins = plugins;
+            vec![]
+        }
+
+        Msg::ComponentsDataFailed { error } => {
+            model.components_tools_loading = false;
+            model.components_skills_loading = false;
+            model.components_plugins_loading = false;
+            model.components_tools_error = Some(error.clone());
+            model.components_skills_error = Some(error.clone());
+            model.components_plugins_error = Some(error);
             vec![]
         }
 
@@ -425,10 +502,12 @@ fn handle_agents_panel_key(
             }
             let state = CreateAgentModal {
                 tools_loading: true,
+                skills_loading: true,
+                plugins_loading: true,
                 ..CreateAgentModal::default()
             };
-            model.modal = Some(Modal::CreateAgent(state));
-            Some(vec![Cmd::LoadTools])
+            model.modal = Some(Modal::CreateAgent(Box::new(state)));
+            Some(vec![Cmd::LoadTools, Cmd::LoadSkills, Cmd::LoadPlugins])
         }
         KeyCode::Char('e') => {
             if model.agents.is_empty() {
@@ -456,13 +535,17 @@ fn handle_agents_panel_key(
                 description: agent.description.unwrap_or_default(),
                 instructions: agent.instructions.unwrap_or_default(),
                 selected_tool_ids,
+                selected_skill_ids: agent.skill_ids,
+                selected_plugin_ids: agent.plugin_ids,
                 tools_loading: true,
+                skills_loading: true,
+                plugins_loading: true,
                 tab: CreateAgentTab::Prompt,
                 focus: CreateAgentField::Name,
                 ..CreateAgentModal::default()
             };
-            model.modal = Some(Modal::CreateAgent(state));
-            Some(vec![Cmd::LoadTools])
+            model.modal = Some(Modal::CreateAgent(Box::new(state)));
+            Some(vec![Cmd::LoadTools, Cmd::LoadSkills, Cmd::LoadPlugins])
         }
         KeyCode::Char('d') => {
             if model.agents.is_empty() {
@@ -621,6 +704,43 @@ fn activate_session_agent(model: &mut Model) {
 }
 
 // ---------------------------------------------------------------------------
+// Components panel key handling
+// ---------------------------------------------------------------------------
+
+fn handle_components_panel_key(
+    model: &mut Model,
+    key: ratatui::crossterm::event::KeyEvent,
+) -> Option<Vec<Cmd>> {
+    use super::model::ComponentsTab;
+
+    const TAB_ORDER: [ComponentsTab; 3] = [
+        ComponentsTab::Plugins,
+        ComponentsTab::Skills,
+        ComponentsTab::Tools,
+    ];
+
+    match key.code {
+        KeyCode::Left | KeyCode::Char('h') => {
+            if let Some(pos) = TAB_ORDER.iter().position(|t| *t == model.components_tab)
+                && pos > 0
+            {
+                model.components_tab = TAB_ORDER[pos - 1];
+            }
+            Some(vec![])
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            if let Some(pos) = TAB_ORDER.iter().position(|t| *t == model.components_tab)
+                && pos + 1 < TAB_ORDER.len()
+            {
+                model.components_tab = TAB_ORDER[pos + 1];
+            }
+            Some(vec![])
+        }
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Modal key dispatch
 // ---------------------------------------------------------------------------
 
@@ -677,20 +797,73 @@ fn update_create_agent_modal(
         return (false, vec![]);
     }
 
+    const TAB_ORDER: [CreateAgentTab; 4] = [
+        CreateAgentTab::Prompt,
+        CreateAgentTab::Tools,
+        CreateAgentTab::Skills,
+        CreateAgentTab::Plugins,
+    ];
+
     match key.code {
         KeyCode::Left => {
-            if state.tab == CreateAgentTab::Tools {
-                state.tab = CreateAgentTab::Prompt;
+            if let Some(pos) = TAB_ORDER.iter().position(|t| *t == state.tab)
+                && pos > 0
+            {
+                state.tab = TAB_ORDER[pos - 1].clone();
                 return (false, vec![]);
             }
         }
         KeyCode::Right => {
-            if state.tab == CreateAgentTab::Prompt {
-                state.tab = CreateAgentTab::Tools;
+            if let Some(pos) = TAB_ORDER.iter().position(|t| *t == state.tab)
+                && pos + 1 < TAB_ORDER.len()
+            {
+                state.tab = TAB_ORDER[pos + 1].clone();
                 return (false, vec![]);
             }
         }
         _ => {}
+    }
+
+    // Ctrl+S submit works from any tab.
+    let submit =
+        key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s');
+    if submit {
+        state.error = None;
+        let name = state.name.trim().to_string();
+        if name.is_empty() {
+            state.error = Some("Name is required.".to_string());
+            return (false, vec![]);
+        }
+        let description = state.description.trim().to_string();
+        let instructions = state.instructions.trim().to_string();
+        if instructions.is_empty() {
+            state.error = Some("Instructions are required.".to_string());
+            return (false, vec![]);
+        }
+        if state.selected_tool_ids.is_empty() {
+            state.error = Some("Select at least one tool.".to_string());
+            return (false, vec![]);
+        }
+
+        let (is_edit, id) = match &state.mode {
+            AgentEditorMode::Create => (false, generate_agent_id(&name)),
+            AgentEditorMode::Edit { agent_id } => (true, agent_id.clone()),
+        };
+
+        state.submitting = true;
+        return (
+            false,
+            vec![Cmd::UpsertAgent {
+                is_edit,
+                id,
+                name,
+                description,
+                instructions,
+                tool_ids: state.selected_tool_ids.clone(),
+                skill_ids: state.selected_skill_ids.clone(),
+                plugin_ids: state.selected_plugin_ids.clone(),
+            }],
+        );
     }
 
     if state.tab == CreateAgentTab::Tools {
@@ -729,43 +902,78 @@ fn update_create_agent_modal(
         return (false, vec![]);
     }
 
-    let submit =
-        key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s');
-    if submit {
-        state.error = None;
-        let name = state.name.trim().to_string();
-        if name.is_empty() {
-            state.error = Some("Name is required.".to_string());
-            return (false, vec![]);
+    if state.tab == CreateAgentTab::Skills {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if !state.skills.is_empty() {
+                    state.skills_selected_index = state.skills_selected_index.saturating_sub(1);
+                    state
+                        .skills_list_state
+                        .select(Some(state.skills_selected_index));
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !state.skills.is_empty() {
+                    state.skills_selected_index =
+                        (state.skills_selected_index + 1).min(state.skills.len() - 1);
+                    state
+                        .skills_list_state
+                        .select(Some(state.skills_selected_index));
+                }
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                if !state.skills.is_empty() {
+                    let idx = state.skills_selected_index.min(state.skills.len() - 1);
+                    let skill_id = state.skills[idx].id.clone();
+                    if let Some(pos) =
+                        state.selected_skill_ids.iter().position(|id| *id == skill_id)
+                    {
+                        state.selected_skill_ids.remove(pos);
+                    } else {
+                        state.selected_skill_ids.push(skill_id);
+                    }
+                }
+            }
+            _ => {}
         }
-        let description = state.description.trim().to_string();
-        let instructions = state.instructions.trim().to_string();
-        if instructions.is_empty() {
-            state.error = Some("Instructions are required.".to_string());
-            return (false, vec![]);
-        }
-        if state.selected_tool_ids.is_empty() {
-            state.error = Some("Select at least one tool.".to_string());
-            return (false, vec![]);
-        }
+        return (false, vec![]);
+    }
 
-        let (is_edit, id) = match &state.mode {
-            AgentEditorMode::Create => (false, generate_agent_id(&name)),
-            AgentEditorMode::Edit { agent_id } => (true, agent_id.clone()),
-        };
-
-        state.submitting = true;
-        return (
-            false,
-            vec![Cmd::UpsertAgent {
-                is_edit,
-                id,
-                name,
-                description,
-                instructions,
-                tool_ids: state.selected_tool_ids.clone(),
-            }],
-        );
+    if state.tab == CreateAgentTab::Plugins {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if !state.plugins.is_empty() {
+                    state.plugins_selected_index = state.plugins_selected_index.saturating_sub(1);
+                    state
+                        .plugins_list_state
+                        .select(Some(state.plugins_selected_index));
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !state.plugins.is_empty() {
+                    state.plugins_selected_index =
+                        (state.plugins_selected_index + 1).min(state.plugins.len() - 1);
+                    state
+                        .plugins_list_state
+                        .select(Some(state.plugins_selected_index));
+                }
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                if !state.plugins.is_empty() {
+                    let idx = state.plugins_selected_index.min(state.plugins.len() - 1);
+                    let plugin_id = state.plugins[idx].id.clone();
+                    if let Some(pos) =
+                        state.selected_plugin_ids.iter().position(|id| *id == plugin_id)
+                    {
+                        state.selected_plugin_ids.remove(pos);
+                    } else {
+                        state.selected_plugin_ids.push(plugin_id);
+                    }
+                }
+            }
+            _ => {}
+        }
+        return (false, vec![]);
     }
 
     match key.code {
@@ -896,6 +1104,18 @@ fn handle_chat_input_key(
             session.waiting_for_response = true;
             session.chat_scroll_from_bottom = 0;
             Some(vec![Cmd::SendPrompt { text }])
+        }
+
+        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(conv_id) = session.conversation_id.clone() {
+                session.history_loading = true;
+                session.chat_scroll_from_bottom = 0;
+                Some(vec![Cmd::LoadConversationHistory {
+                    conversation_id: conv_id,
+                }])
+            } else {
+                Some(vec![])
+            }
         }
 
         KeyCode::Char(c) => {

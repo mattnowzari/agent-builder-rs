@@ -33,6 +33,8 @@ pub struct AgentSummary {
     pub description: Option<String>,
     pub instructions: Option<String>,
     pub tool_ids: Vec<String>,
+    pub skill_ids: Vec<String>,
+    pub plugin_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -46,6 +48,34 @@ pub struct ToolSummary {
     pub readonly: bool,
     #[serde(default)]
     pub description: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SkillSummary {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub readonly: bool,
+    #[serde(default)]
+    pub plugin_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PluginSummary {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub readonly: bool,
+    #[serde(default)]
+    pub skill_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -184,6 +214,8 @@ impl AgentBuilderClient {
             .first()
             .map(|t| t.tool_ids.clone())
             .unwrap_or_default();
+        let sent_skill_ids = req.configuration.skill_ids.clone();
+        let sent_plugin_ids = req.configuration.plugin_ids.clone();
 
         let url = self.api_url("agents");
         let resp = self
@@ -209,6 +241,8 @@ impl AgentBuilderClient {
             description: Some(parsed.description),
             instructions: sent_instructions,
             tool_ids: sent_tool_ids,
+            skill_ids: sent_skill_ids,
+            plugin_ids: sent_plugin_ids,
         })
     }
 
@@ -220,6 +254,8 @@ impl AgentBuilderClient {
             .first()
             .map(|t| t.tool_ids.clone())
             .unwrap_or_default();
+        let sent_skill_ids = req.configuration.skill_ids.clone();
+        let sent_plugin_ids = req.configuration.plugin_ids.clone();
 
         let url = self.api_url(&format!("agents/{id}"));
         let resp = self
@@ -245,7 +281,49 @@ impl AgentBuilderClient {
             description: Some(parsed.description),
             instructions: sent_instructions,
             tool_ids: sent_tool_ids,
+            skill_ids: sent_skill_ids,
+            plugin_ids: sent_plugin_ids,
         })
+    }
+
+    pub async fn list_skills(&self) -> Result<Vec<SkillSummary>> {
+        let url = format!("{}?include_plugins=true", self.api_url("skills"));
+        let resp = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to send request")?;
+
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("Agent Builder API error {status}: {text}");
+        }
+
+        let parsed: ListSkillsResponse =
+            serde_json::from_str(&text).context("failed to parse list skills response JSON")?;
+        Ok(parsed.results)
+    }
+
+    pub async fn list_plugins(&self) -> Result<Vec<PluginSummary>> {
+        let url = self.api_url("plugins");
+        let resp = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .context("failed to send request")?;
+
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("Agent Builder API error {status}: {text}");
+        }
+
+        let parsed: ListPluginsResponse =
+            serde_json::from_str(&text).context("failed to parse list plugins response JSON")?;
+        Ok(parsed.results)
     }
 
     pub async fn list_conversations(&self) -> Result<Vec<ConversationSummary>> {
@@ -365,12 +443,35 @@ fn parse_agents(v: serde_json::Value) -> Result<Vec<AgentSummary>> {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let tool_ids = obj
-            .get("configuration")
+        let config = obj.get("configuration");
+
+        let tool_ids = config
             .and_then(|v| v.get("tools"))
             .and_then(|v| v.as_array())
             .and_then(|tools| tools.first())
             .and_then(|v| v.get("tool_ids"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(|s| s.to_string())
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default();
+
+        let skill_ids = config
+            .and_then(|v| v.get("skill_ids"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(|s| s.to_string())
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default();
+
+        let plugin_ids = config
+            .and_then(|v| v.get("plugin_ids"))
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
@@ -386,6 +487,8 @@ fn parse_agents(v: serde_json::Value) -> Result<Vec<AgentSummary>> {
             description,
             instructions,
             tool_ids,
+            skill_ids,
+            plugin_ids,
         });
     }
 
@@ -659,6 +762,18 @@ struct ListToolsResponse {
     results: Vec<ToolSummary>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ListSkillsResponse {
+    #[serde(default)]
+    results: Vec<SkillSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListPluginsResponse {
+    #[serde(default)]
+    results: Vec<PluginSummary>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct CreateAgentRequest {
     pub id: String,
@@ -691,6 +806,10 @@ pub struct AgentConfiguration {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
     pub tools: Vec<AgentTools>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub skill_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub plugin_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]

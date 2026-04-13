@@ -1,6 +1,6 @@
 use ratatui::widgets::ListState;
 
-use crate::agentbuilder::{AgentSummary, ToolSummary};
+use crate::agentbuilder::{AgentSummary, PluginSummary, SkillSummary, ToolSummary};
 use crate::config::Config;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -9,7 +9,15 @@ pub enum ActivePanel {
     Agents,
     Chats,
     Chat,
-    Details,
+    Components,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ComponentsTab {
+    #[default]
+    Plugins,
+    Skills,
+    Tools,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +82,18 @@ pub struct Model {
     pub selected_agent_id: Option<String>,
     pub agents_list_state: ListState,
 
+    // -- Components panel --
+    pub components_tab: ComponentsTab,
+    pub components_tools: Vec<ToolSummary>,
+    pub components_tools_loading: bool,
+    pub components_tools_error: Option<String>,
+    pub components_skills: Vec<SkillSummary>,
+    pub components_skills_loading: bool,
+    pub components_skills_error: Option<String>,
+    pub components_plugins: Vec<PluginSummary>,
+    pub components_plugins_loading: bool,
+    pub components_plugins_error: Option<String>,
+
     // -- Modal --
     pub modal: Option<Modal>,
 }
@@ -99,7 +119,7 @@ pub enum Modal {
     MissingEnv { missing: Vec<&'static str> },
     Info { title: String, message: String },
     Error { title: String, message: String },
-    CreateAgent(CreateAgentModal),
+    CreateAgent(Box<CreateAgentModal>),
     ConfirmDeleteAgent(ConfirmDeleteAgentModal),
 }
 
@@ -120,6 +140,8 @@ pub enum AgentEditorMode {
 pub enum CreateAgentTab {
     Prompt,
     Tools,
+    Skills,
+    Plugins,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +166,20 @@ pub struct CreateAgentModal {
     pub tools_selected_index: usize,
     pub tools_list_state: ListState,
     pub selected_tool_ids: Vec<String>,
+
+    pub skills_loading: bool,
+    pub skills_error: Option<String>,
+    pub skills: Vec<SkillSummary>,
+    pub skills_selected_index: usize,
+    pub skills_list_state: ListState,
+    pub selected_skill_ids: Vec<String>,
+
+    pub plugins_loading: bool,
+    pub plugins_error: Option<String>,
+    pub plugins: Vec<PluginSummary>,
+    pub plugins_selected_index: usize,
+    pub plugins_list_state: ListState,
+    pub selected_plugin_ids: Vec<String>,
 
     pub submitting: bool,
     pub error: Option<String>,
@@ -170,6 +206,18 @@ impl Default for CreateAgentModal {
             tools_selected_index: 0,
             tools_list_state: ListState::default(),
             selected_tool_ids,
+            skills_loading: false,
+            skills_error: None,
+            skills: Vec::new(),
+            skills_selected_index: 0,
+            skills_list_state: ListState::default(),
+            selected_skill_ids: Vec::new(),
+            plugins_loading: false,
+            plugins_error: None,
+            plugins: Vec::new(),
+            plugins_selected_index: 0,
+            plugins_list_state: ListState::default(),
+            selected_plugin_ids: Vec::new(),
             submitting: false,
             error: None,
         }

@@ -8,8 +8,8 @@ use ratatui::widgets::{
 };
 
 use super::model::{
-    ActivePanel, AgentEditorMode, ChatRole, CreateAgentField, CreateAgentModal, CreateAgentTab,
-    Modal, Model,
+    ActivePanel, AgentEditorMode, ChatRole, ComponentsTab, CreateAgentField, CreateAgentModal,
+    CreateAgentTab, Modal, Model,
 };
 
 const BORDER_NORMAL: Color = Color::DarkGray;
@@ -43,7 +43,7 @@ pub fn view(frame: &mut Frame, model: &mut Model) {
     render_agents_panel(frame, model, left_rows[0]);
     render_chats_panel(frame, model, left_rows[1]);
     render_center_panel(frame, model, columns[1]);
-    render_details_panel(frame, model, columns[2]);
+    render_components_panel(frame, model, columns[2]);
 
     if let Some(modal) = model.modal.as_mut() {
         render_modal(frame, modal);
@@ -282,7 +282,7 @@ fn render_center_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
 
 fn render_chat_history(frame: &mut Frame, model: &mut Model, style: Style, area: Rect) {
     let history_block = Block::default()
-        .title(" Chat [↑↓ PgUp/PgDn scroll] ")
+        .title(" Chat [↑↓ PgUp/PgDn scroll] [Ctrl+R refresh] ")
         .borders(Borders::ALL)
         .border_style(style);
 
@@ -572,62 +572,186 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Details panel
+// Components panel
 // ---------------------------------------------------------------------------
 
-fn render_details_panel(frame: &mut Frame, model: &Model, area: Rect) {
-    let style = panel_style(model.active, ActivePanel::Details);
+fn render_components_panel(frame: &mut Frame, model: &Model, area: Rect) {
+    let style = panel_style(model.active, ActivePanel::Components);
 
-    let mut lines: Vec<Line<'_>> = Vec::new();
-
-    if let Some(sel_id) = &model.selected_agent_id {
-        if let Some(agent) = model.agents.iter().find(|a| a.id == *sel_id) {
-            lines.push(Line::from(Span::styled(
-                &agent.name,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::from(format!("ID: {}", agent.id)));
-            lines.push(Line::from(""));
-            if let Some(desc) = &agent.description {
-                lines.push(Line::from(Span::styled(
-                    desc.as_str(),
-                    Style::default().fg(SUBTLE),
-                )));
-                lines.push(Line::from(""));
-            }
-            if let Some(instr) = &agent.instructions {
-                lines.push(Line::from("Instructions:"));
-                for l in instr.lines() {
-                    lines.push(Line::from(format!("  {l}")));
-                }
-                lines.push(Line::from(""));
-            }
-            if !agent.tool_ids.is_empty() {
-                lines.push(Line::from(format!("Tools ({})", agent.tool_ids.len())));
-                for tid in &agent.tool_ids {
-                    lines.push(Line::from(format!("  • {tid}")));
-                }
-            }
-        }
-    } else {
-        lines.push(Line::styled(
-            "No agent selected",
-            Style::default().fg(SUBTLE),
-        ));
-    }
-
-    let block = Block::default()
-        .title(" Details ")
+    let outer_block = Block::default()
+        .title(" Components [◀▶ switch tab] ")
         .borders(Borders::ALL)
         .border_style(style);
 
-    let widget = Paragraph::new(lines)
-        .block(block)
-        .wrap(Wrap { trim: false });
+    let inner = outer_block.inner(area);
+    frame.render_widget(outer_block, area);
 
-    frame.render_widget(widget, area);
+    if inner.height < 3 || inner.width < 4 {
+        return;
+    }
+
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(1)])
+        .split(inner);
+
+    let tabs_area = layout[0];
+    let content_area = layout[1];
+
+    let tabs = Tabs::new(vec![
+        Line::from("◀ Plugins"),
+        Line::from("Skills"),
+        Line::from("Tools ▶"),
+    ])
+    .select(match model.components_tab {
+        ComponentsTab::Plugins => 0,
+        ComponentsTab::Skills => 1,
+        ComponentsTab::Tools => 2,
+    })
+    .highlight_style(
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
+    frame.render_widget(tabs, tabs_area);
+
+    match model.components_tab {
+        ComponentsTab::Plugins => {
+            render_components_list(
+                frame,
+                content_area,
+                model.components_plugins_loading,
+                model.components_plugins_error.as_deref(),
+                "plugins",
+                model
+                    .components_plugins
+                    .iter()
+                    .map(|p| {
+                        let version = if p.version.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" v{}", p.version)
+                        };
+                        let skills = if p.skill_ids.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" ({} skills)", p.skill_ids.len())
+                        };
+                        (
+                            p.name.clone(),
+                            format!("{}{version}{skills}", p.description),
+                            p.readonly,
+                        )
+                    })
+                    .collect(),
+            );
+        }
+        ComponentsTab::Skills => {
+            render_components_list(
+                frame,
+                content_area,
+                model.components_skills_loading,
+                model.components_skills_error.as_deref(),
+                "skills",
+                model
+                    .components_skills
+                    .iter()
+                    .map(|s| {
+                        let plugin_tag = if s.plugin_id.is_some() {
+                            " (plugin)"
+                        } else {
+                            ""
+                        };
+                        (
+                            s.name.clone(),
+                            format!("{}{plugin_tag}", s.description),
+                            s.readonly,
+                        )
+                    })
+                    .collect(),
+            );
+        }
+        ComponentsTab::Tools => {
+            render_components_list(
+                frame,
+                content_area,
+                model.components_tools_loading,
+                model.components_tools_error.as_deref(),
+                "tools",
+                model
+                    .components_tools
+                    .iter()
+                    .map(|t| (t.id.clone(), t.description.clone(), t.readonly))
+                    .collect(),
+            );
+        }
+    }
+}
+
+fn render_components_list(
+    frame: &mut Frame,
+    area: Rect,
+    loading: bool,
+    error: Option<&str>,
+    label: &str,
+    items: Vec<(String, String, bool)>,
+) {
+    if loading {
+        let msg = Paragraph::new(format!("Loading {label}..."))
+            .style(Style::default().fg(SUBTLE));
+        frame.render_widget(msg, area);
+        return;
+    }
+    if let Some(err) = error {
+        let msg = Paragraph::new(format!("Error: {err}"))
+            .style(Style::default().fg(Color::Red))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(msg, area);
+        return;
+    }
+    if items.is_empty() {
+        let msg = Paragraph::new(format!("No {label} available."))
+            .style(Style::default().fg(SUBTLE));
+        frame.render_widget(msg, area);
+        return;
+    }
+
+    let list_items: Vec<ListItem> = items
+        .iter()
+        .map(|(name, desc, readonly)| {
+            let tag = if *readonly { " (built-in)" } else { "" };
+            let line = Line::from(vec![
+                Span::styled("• ", Style::default().fg(Color::Cyan)),
+                Span::raw(format!("{name} ")),
+                Span::styled(
+                    format!("{desc}{tag}"),
+                    Style::default().fg(SUBTLE),
+                ),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
+
+    let count = list_items.len();
+    let list = List::new(list_items);
+    let title_line = Line::from(Span::styled(
+        format!(" {count} {label} "),
+        Style::default().fg(SUBTLE),
+    ));
+    let header = Paragraph::new(title_line);
+    
+    if area.height < 2 {
+        frame.render_widget(list, area);
+        return;
+    }
+
+    let split = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
+
+    frame.render_widget(header, split[0]);
+    frame.render_widget(list, split[1]);
 }
 
 // ---------------------------------------------------------------------------
@@ -757,19 +881,24 @@ fn render_create_agent_modal(frame: &mut Frame, state: &mut CreateAgentModal) {
 
     let tabs = Tabs::new(vec![
         Line::from("◀ Prompt"),
-        Line::from(format!("Tools ({}) ▶", state.selected_tool_ids.len())),
+        Line::from(format!("Tools ({})", state.selected_tool_ids.len())),
+        Line::from(format!("Skills ({})", state.selected_skill_ids.len())),
+        Line::from(format!("Plugins ({}) ▶", state.selected_plugin_ids.len())),
     ])
     .select(match state.tab {
         CreateAgentTab::Prompt => 0,
         CreateAgentTab::Tools => 1,
+        CreateAgentTab::Skills => 2,
+        CreateAgentTab::Plugins => 3,
     })
     .highlight_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
     frame.render_widget(tabs, tabs_area);
 
-    if state.tab == CreateAgentTab::Prompt {
-        render_prompt_tab(frame, state, content_area);
-    } else {
-        render_tools_tab(frame, state, content_area);
+    match state.tab {
+        CreateAgentTab::Prompt => render_prompt_tab(frame, state, content_area),
+        CreateAgentTab::Tools => render_tools_tab(frame, state, content_area),
+        CreateAgentTab::Skills => render_skills_tab(frame, state, content_area),
+        CreateAgentTab::Plugins => render_plugins_tab(frame, state, content_area),
     }
 
     let mut help_lines = vec![Line::from(
@@ -912,4 +1041,122 @@ fn render_tools_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect)
         .highlight_symbol("▶ ");
 
     frame.render_stateful_widget(list, area, &mut state.tools_list_state);
+}
+
+fn render_skills_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect) {
+    if state.skills_loading {
+        let msg = Paragraph::new("Loading skills...").style(Style::default().fg(SUBTLE));
+        frame.render_widget(msg, area);
+        return;
+    }
+    if let Some(err) = &state.skills_error {
+        let msg = Paragraph::new(format!("Error: {err}"))
+            .style(Style::default().fg(Color::Red))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(msg, area);
+        return;
+    }
+    if state.skills.is_empty() {
+        let msg = Paragraph::new("No skills available.").style(Style::default().fg(SUBTLE));
+        frame.render_widget(msg, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = state
+        .skills
+        .iter()
+        .map(|s| {
+            let checked = if state.selected_skill_ids.contains(&s.id) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            let plugin_tag = s
+                .plugin_id
+                .as_deref()
+                .map(|_| " (plugin)")
+                .unwrap_or("");
+            let readonly_tag = if s.readonly { " (built-in)" } else { "" };
+            let line = Line::from(vec![
+                Span::styled(format!("{checked} "), Style::default().fg(Color::Cyan)),
+                Span::raw(format!("{} ", s.name)),
+                Span::styled(
+                    format!("{}{readonly_tag}{plugin_tag}", s.description),
+                    Style::default().fg(SUBTLE),
+                ),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    frame.render_stateful_widget(list, area, &mut state.skills_list_state);
+}
+
+fn render_plugins_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect) {
+    if state.plugins_loading {
+        let msg = Paragraph::new("Loading plugins...").style(Style::default().fg(SUBTLE));
+        frame.render_widget(msg, area);
+        return;
+    }
+    if let Some(err) = &state.plugins_error {
+        let msg = Paragraph::new(format!("Error: {err}"))
+            .style(Style::default().fg(Color::Red))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(msg, area);
+        return;
+    }
+    if state.plugins.is_empty() {
+        let msg = Paragraph::new("No plugins available.").style(Style::default().fg(SUBTLE));
+        frame.render_widget(msg, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = state
+        .plugins
+        .iter()
+        .map(|p| {
+            let checked = if state.selected_plugin_ids.contains(&p.id) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            let skills_info = if p.skill_ids.is_empty() {
+                String::new()
+            } else {
+                format!(" ({} skills)", p.skill_ids.len())
+            };
+            let version_tag = if p.version.is_empty() {
+                String::new()
+            } else {
+                format!(" v{}", p.version)
+            };
+            let line = Line::from(vec![
+                Span::styled(format!("{checked} "), Style::default().fg(Color::Cyan)),
+                Span::raw(format!("{} ", p.name)),
+                Span::styled(
+                    format!("{}{version_tag}{skills_info}", p.description),
+                    Style::default().fg(SUBTLE),
+                ),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    frame.render_stateful_widget(list, area, &mut state.plugins_list_state);
 }

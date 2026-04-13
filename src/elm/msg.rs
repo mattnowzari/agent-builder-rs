@@ -1,6 +1,6 @@
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
 
-use crate::agentbuilder::{AgentSummary, ConversationSummary, ToolSummary};
+use crate::agentbuilder::{AgentSummary, ConversationSummary, PluginSummary, SkillSummary, ToolSummary};
 use crate::config::Config;
 
 #[derive(Debug, Clone)]
@@ -31,9 +31,21 @@ pub enum Msg {
         error: String,
     },
 
-    // -- Tools --
+    // -- Tools / Skills / Plugins (modal) --
     ToolsLoaded { tools: Vec<ToolSummary> },
     ToolsLoadFailed { error: String },
+    SkillsLoaded { skills: Vec<SkillSummary> },
+    SkillsLoadFailed { error: String },
+    PluginsLoaded { plugins: Vec<PluginSummary> },
+    PluginsLoadFailed { error: String },
+
+    // -- Components panel data --
+    ComponentsDataLoaded {
+        tools: Vec<ToolSummary>,
+        skills: Vec<SkillSummary>,
+        plugins: Vec<PluginSummary>,
+    },
+    ComponentsDataFailed { error: String },
 
     // -- Agent CRUD --
     AgentUpserted { agent: AgentSummary, is_edit: bool },

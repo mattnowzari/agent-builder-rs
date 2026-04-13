@@ -5,6 +5,9 @@ pub enum Cmd {
     LoadConversations,
     LoadConversationHistory { conversation_id: String },
     LoadTools,
+    LoadSkills,
+    LoadPlugins,
+    LoadComponentsData,
     SendPrompt { text: String },
     UpsertAgent {
         is_edit: bool,
@@ -13,6 +16,8 @@ pub enum Cmd {
         description: String,
         instructions: String,
         tool_ids: Vec<String>,
+        skill_ids: Vec<String>,
+        plugin_ids: Vec<String>,
     },
     DeleteAgent { id: String },
 }
