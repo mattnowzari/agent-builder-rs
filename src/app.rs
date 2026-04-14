@@ -91,6 +91,37 @@ fn read_msg() -> Result<Option<Msg>> {
     }
 }
 
+/// Spawn an API task: checks config readiness, builds the client, runs `work`,
+/// and sends the appropriate success or failure message.
+fn spawn_api<F, Fut>(
+    rt: &tokio::runtime::Runtime,
+    cfg: std::sync::Arc<crate::config::Config>,
+    tx: tokio::sync::mpsc::UnboundedSender<Msg>,
+    on_fail: impl FnOnce(String) -> Msg + Send + 'static,
+    work: F,
+)
+where
+    F: FnOnce(crate::agent_builder::AgentBuilderClient, tokio::sync::mpsc::UnboundedSender<Msg>) -> Fut
+        + Send
+        + 'static,
+    Fut: std::future::Future<Output = ()> + Send,
+{
+    rt.spawn(async move {
+        if !cfg.is_ready() {
+            let _ = tx.send(on_fail("Missing KIBANA_URL and/or API_KEY.".to_string()));
+            return;
+        }
+        let client = match crate::agent_builder::AgentBuilderClient::new(&cfg) {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = tx.send(on_fail(e.to_string()));
+                return;
+            }
+        };
+        work(client, tx).await;
+    });
+}
+
 fn execute_cmd(
     rt: &tokio::runtime::Runtime,
     tx: tokio::sync::mpsc::UnboundedSender<Msg>,
@@ -110,267 +141,98 @@ fn execute_cmd(
         }
 
         Cmd::LoadAgents => {
-            let cfg = model.config.clone();
-            rt.spawn(async move {
-                if !cfg.is_ready() {
-                    let _ = tx.send(Msg::AgentsLoadFailed {
-                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
-                    });
-                    return;
-                }
-                let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(Msg::AgentsLoadFailed {
-                            error: e.to_string(),
-                        });
-                        return;
-                    }
-                };
+            let generation = model.agents_generation;
+            spawn_api(rt, model.config.clone(), tx, move |e| Msg::AgentsLoadFailed { error: e, generation }, move |client, tx| async move {
                 match client.list_agents().await {
-                    Ok(agents) => {
-                        let _ = tx.send(Msg::AgentsLoaded { agents });
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Msg::AgentsLoadFailed {
-                            error: e.to_string(),
-                        });
-                    }
+                    Ok(agents) => { let _ = tx.send(Msg::AgentsLoaded { agents, generation }); }
+                    Err(e) => { let _ = tx.send(Msg::AgentsLoadFailed { error: e.to_string(), generation }); }
                 }
             });
         }
 
         Cmd::LoadConversations => {
-            let cfg = model.config.clone();
-            rt.spawn(async move {
-                if !cfg.is_ready() {
-                    let _ = tx.send(Msg::ConversationsLoadFailed {
-                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
-                    });
-                    return;
-                }
-                let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(Msg::ConversationsLoadFailed {
-                            error: e.to_string(),
-                        });
-                        return;
-                    }
-                };
+            spawn_api(rt, model.config.clone(), tx, |e| Msg::ConversationsLoadFailed { error: e }, |client, tx| async move {
                 match client.list_conversations().await {
-                    Ok(conversations) => {
-                        let _ = tx.send(Msg::ConversationsLoaded { conversations });
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Msg::ConversationsLoadFailed {
-                            error: e.to_string(),
-                        });
-                    }
+                    Ok(conversations) => { let _ = tx.send(Msg::ConversationsLoaded { conversations }); }
+                    Err(e) => { let _ = tx.send(Msg::ConversationsLoadFailed { error: e.to_string() }); }
                 }
             });
         }
 
         Cmd::LoadConversationHistory { conversation_id } => {
-            let cfg = model.config.clone();
             let cid = conversation_id.clone();
-            rt.spawn(async move {
-                if !cfg.is_ready() {
-                    let _ = tx.send(Msg::ConversationHistoryFailed {
-                        conversation_id: cid,
-                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
-                    });
-                    return;
-                }
-                let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(Msg::ConversationHistoryFailed {
-                            conversation_id: cid,
-                            error: e.to_string(),
-                        });
-                        return;
-                    }
-                };
-                match client.get_conversation(&cid).await {
+            let cid2 = conversation_id;
+            spawn_api(rt, model.config.clone(), tx, move |e| Msg::ConversationHistoryFailed { conversation_id: cid, error: e }, move |client, tx| async move {
+                match client.get_conversation(&cid2).await {
                     Ok(detail) => {
-                        let messages: Vec<(String, String)> = detail
-                            .messages
-                            .into_iter()
-                            .map(|m| (m.role, m.content))
-                            .collect();
-                        let _ = tx.send(Msg::ConversationHistoryLoaded {
-                            conversation_id: cid,
-                            messages,
-                        });
+                        let messages: Vec<(String, String)> = detail.messages.into_iter().map(|m| (m.role, m.content)).collect();
+                        let _ = tx.send(Msg::ConversationHistoryLoaded { conversation_id: cid2, messages });
                     }
-                    Err(e) => {
-                        let _ = tx.send(Msg::ConversationHistoryFailed {
-                            conversation_id: cid,
-                            error: e.to_string(),
-                        });
-                    }
+                    Err(e) => { let _ = tx.send(Msg::ConversationHistoryFailed { conversation_id: cid2, error: e.to_string() }); }
                 }
             });
         }
 
         Cmd::LoadTools => {
-            let cfg = model.config.clone();
-            rt.spawn(async move {
-                if !cfg.is_ready() {
-                    let _ = tx.send(Msg::ToolsLoadFailed {
-                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
-                    });
-                    return;
-                }
-                let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(Msg::ToolsLoadFailed {
-                            error: e.to_string(),
-                        });
-                        return;
-                    }
-                };
+            spawn_api(rt, model.config.clone(), tx, |e| Msg::ToolsLoadFailed { error: e }, |client, tx| async move {
                 match client.list_tools().await {
-                    Ok(tools) => {
-                        let _ = tx.send(Msg::ToolsLoaded { tools });
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Msg::ToolsLoadFailed {
-                            error: e.to_string(),
-                        });
-                    }
+                    Ok(tools) => { let _ = tx.send(Msg::ToolsLoaded { tools }); }
+                    Err(e) => { let _ = tx.send(Msg::ToolsLoadFailed { error: e.to_string() }); }
                 }
             });
         }
 
         Cmd::LoadSkills => {
-            let cfg = model.config.clone();
-            rt.spawn(async move {
-                if !cfg.is_ready() {
-                    let _ = tx.send(Msg::SkillsLoadFailed {
-                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
-                    });
-                    return;
-                }
-                let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(Msg::SkillsLoadFailed {
-                            error: e.to_string(),
-                        });
-                        return;
-                    }
-                };
+            spawn_api(rt, model.config.clone(), tx, |e| Msg::SkillsLoadFailed { error: e }, |client, tx| async move {
                 match client.list_skills().await {
-                    Ok(skills) => {
-                        let _ = tx.send(Msg::SkillsLoaded { skills });
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Msg::SkillsLoadFailed {
-                            error: e.to_string(),
-                        });
-                    }
+                    Ok(skills) => { let _ = tx.send(Msg::SkillsLoaded { skills }); }
+                    Err(e) => { let _ = tx.send(Msg::SkillsLoadFailed { error: e.to_string() }); }
                 }
             });
         }
 
         Cmd::LoadPlugins => {
-            let cfg = model.config.clone();
-            rt.spawn(async move {
-                if !cfg.is_ready() {
-                    let _ = tx.send(Msg::PluginsLoadFailed {
-                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
-                    });
-                    return;
-                }
-                let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(Msg::PluginsLoadFailed {
-                            error: e.to_string(),
-                        });
-                        return;
-                    }
-                };
+            spawn_api(rt, model.config.clone(), tx, |e| Msg::PluginsLoadFailed { error: e }, |client, tx| async move {
                 match client.list_plugins().await {
-                    Ok(plugins) => {
-                        let _ = tx.send(Msg::PluginsLoaded { plugins });
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Msg::PluginsLoadFailed {
-                            error: e.to_string(),
-                        });
-                    }
+                    Ok(plugins) => { let _ = tx.send(Msg::PluginsLoaded { plugins }); }
+                    Err(e) => { let _ = tx.send(Msg::PluginsLoadFailed { error: e.to_string() }); }
                 }
             });
         }
 
         Cmd::LoadComponentsData => {
-            let cfg = model.config.clone();
-            rt.spawn(async move {
-                if !cfg.is_ready() {
-                    let _ = tx.send(Msg::ComponentsDataFailed {
-                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
-                    });
-                    return;
-                }
-                let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(Msg::ComponentsDataFailed {
-                            error: e.to_string(),
-                        });
-                        return;
-                    }
+            let generation = model.components_generation;
+            spawn_api(rt, model.config.clone(), tx, move |e| Msg::ComponentsDataFailed { error: e, generation }, move |client, tx| async move {
+                let mut errors = Vec::new();
+                let tools = match client.list_tools().await {
+                    Ok(t) => t,
+                    Err(e) => { errors.push(format!("tools: {e}")); vec![] }
+                };
+                let skills = match client.list_skills().await {
+                    Ok(s) => s,
+                    Err(e) => { errors.push(format!("skills: {e}")); vec![] }
+                };
+                let plugins = match client.list_plugins().await {
+                    Ok(p) => p,
+                    Err(e) => { errors.push(format!("plugins: {e}")); vec![] }
                 };
 
-                let tools = client.list_tools().await.unwrap_or_default();
-                let skills = client.list_skills().await.unwrap_or_default();
-                let plugins = client.list_plugins().await.unwrap_or_default();
-
-                let _ = tx.send(Msg::ComponentsDataLoaded {
-                    tools,
-                    skills,
-                    plugins,
-                });
+                if errors.is_empty() {
+                    let _ = tx.send(Msg::ComponentsDataLoaded { tools, skills, plugins, generation });
+                } else {
+                    let _ = tx.send(Msg::ComponentsDataFailed { error: errors.join("; "), generation });
+                }
             });
         }
 
         Cmd::SendPrompt { text } => {
-            let cfg = model.config.clone();
             let conversation_id = model
                 .active_session()
                 .and_then(|s| s.conversation_id.clone());
-            rt.spawn(async move {
-                if !cfg.is_ready() {
-                    let _ = tx.send(Msg::PromptResponseFailed {
-                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
-                    });
-                    return;
-                }
-                let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(Msg::PromptResponseFailed {
-                            error: e.to_string(),
-                        });
-                        return;
-                    }
-                };
+            spawn_api(rt, model.config.clone(), tx, |e| Msg::PromptResponseFailed { error: e }, move |client, tx| async move {
                 match client.converse(&text, conversation_id.as_deref()).await {
-                    Ok(res) => {
-                        let _ = tx.send(Msg::PromptResponseReceived {
-                            content: res.message,
-                            conversation_id: res.conversation_id,
-                        });
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Msg::PromptResponseFailed {
-                            error: e.to_string(),
-                        });
-                    }
+                    Ok(res) => { let _ = tx.send(Msg::PromptResponseReceived { content: res.message, conversation_id: res.conversation_id }); }
+                    Err(e) => { let _ = tx.send(Msg::PromptResponseFailed { error: e.to_string() }); }
                 }
             });
         }
@@ -385,79 +247,34 @@ fn execute_cmd(
             skill_ids,
             plugin_ids,
         } => {
-            let cfg = model.config.clone();
-            rt.spawn(async move {
-                if !cfg.is_ready() {
-                    let _ = tx.send(Msg::AgentUpsertFailed {
-                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
-                        is_edit,
-                    });
-                    return;
-                }
-                let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(Msg::AgentUpsertFailed {
-                            error: e.to_string(),
-                            is_edit,
-                        });
-                        return;
-                    }
-                };
-
-                let config = crate::agentbuilder::AgentConfiguration {
+            spawn_api(rt, model.config.clone(), tx, move |e| Msg::AgentUpsertFailed { error: e }, move |client, tx| async move {
+                let config = crate::agent_builder::AgentConfiguration {
                     instructions: Some(instructions),
-                    tools: vec![crate::agentbuilder::AgentTools { tool_ids }],
+                    tools: vec![crate::agent_builder::AgentTools { tool_ids }],
                     skill_ids,
                     plugin_ids,
                 };
 
                 let res = if is_edit {
-                    client
-                        .update_agent(
-                            &id,
-                            crate::agentbuilder::UpdateAgentRequest {
-                                name,
-                                description,
-                                configuration: config,
-                                avatar_color: None,
-                                avatar_symbol: None,
-                                labels: vec![],
-                            },
-                        )
-                        .await
+                    client.update_agent(&id, crate::agent_builder::UpdateAgentRequest {
+                        name, description, configuration: config,
+                        avatar_color: None, avatar_symbol: None, labels: vec![],
+                    }).await
                 } else {
-                    client
-                        .create_agent(crate::agentbuilder::CreateAgentRequest {
-                            id,
-                            name,
-                            description,
-                            configuration: config,
-                            avatar_color: None,
-                            avatar_symbol: None,
-                            labels: vec![],
-                        })
-                        .await
+                    client.create_agent(crate::agent_builder::CreateAgentRequest {
+                        id, name, description, configuration: config,
+                        avatar_color: None, avatar_symbol: None, labels: vec![],
+                    }).await
                 };
 
                 match res {
-                    Ok(agent) => {
-                        let _ = tx.send(Msg::AgentUpserted { agent, is_edit });
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Msg::AgentUpsertFailed {
-                            error: e.to_string(),
-                            is_edit,
-                        });
-                    }
+                    Ok(agent) => { let _ = tx.send(Msg::AgentUpserted { agent, is_edit }); }
+                    Err(e) => { let _ = tx.send(Msg::AgentUpsertFailed { error: e.to_string() }); }
                 }
             });
         }
 
-        Cmd::ImportComponentFromFile {
-            path,
-            component_type,
-        } => {
+        Cmd::ImportComponentFromFile { path, component_type } => {
             let cfg = model.config.clone();
             rt.spawn(async move {
                 use crate::elm::ComponentsTab;
@@ -467,98 +284,56 @@ fn execute_cmd(
                         let contents = match tokio::fs::read_to_string(&path).await {
                             Ok(c) => c,
                             Err(e) => {
-                                let _ = tx.send(Msg::ToolCreateFromFileFailed {
-                                    error: format!("Failed to read file: {e}"),
-                                });
+                                let _ = tx.send(Msg::ToolCreateFromFileFailed { error: format!("Failed to read file: {e}") });
                                 return;
                             }
                         };
-
-                        let req = match crate::agentbuilder::parse_tool_yaml(&contents) {
+                        let req = match crate::agent_builder::parse_tool_yaml(&contents) {
                             Ok(r) => r,
                             Err(e) => {
-                                let _ = tx.send(Msg::ToolCreateFromFileFailed {
-                                    error: format!("YAML parse error: {e}"),
-                                });
+                                let _ = tx.send(Msg::ToolCreateFromFileFailed { error: format!("YAML parse error: {e}") });
                                 return;
                             }
                         };
-
                         if !cfg.is_ready() {
-                            let _ = tx.send(Msg::ToolCreateFromFileFailed {
-                                error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
-                            });
+                            let _ = tx.send(Msg::ToolCreateFromFileFailed { error: "Missing KIBANA_URL and/or API_KEY.".to_string() });
                             return;
                         }
-                        let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
+                        let client = match crate::agent_builder::AgentBuilderClient::new(&cfg) {
                             Ok(c) => c,
                             Err(e) => {
-                                let _ = tx.send(Msg::ToolCreateFromFileFailed {
-                                    error: e.to_string(),
-                                });
+                                let _ = tx.send(Msg::ToolCreateFromFileFailed { error: e.to_string() });
                                 return;
                             }
                         };
-
                         match client.create_tool(&req).await {
-                            Ok(tool) => {
-                                let _ = tx.send(Msg::ToolCreatedFromFile { tool });
-                            }
-                            Err(e) => {
-                                let _ = tx.send(Msg::ToolCreateFromFileFailed {
-                                    error: e.to_string(),
-                                });
-                            }
+                            Ok(tool) => { let _ = tx.send(Msg::ToolCreatedFromFile { tool }); }
+                            Err(e) => { let _ = tx.send(Msg::ToolCreateFromFileFailed { error: e.to_string() }); }
                         }
                     }
                     ComponentsTab::Skills => {
-                        let _ = tx.send(Msg::ToolCreateFromFileFailed {
-                            error: "Skill import from YAML is not yet implemented.".to_string(),
-                        });
+                        let _ = tx.send(Msg::ToolCreateFromFileFailed { error: "Skill import from YAML is not yet implemented.".to_string() });
                     }
                     ComponentsTab::Plugins => {
-                        let _ = tx.send(Msg::ToolCreateFromFileFailed {
-                            error: "Plugin import from YAML is not yet implemented.".to_string(),
-                        });
+                        let _ = tx.send(Msg::ToolCreateFromFileFailed { error: "Plugin import from YAML is not yet implemented.".to_string() });
                     }
                 }
             });
         }
 
         Cmd::DeleteAgent { id } => {
-            let cfg = model.config.clone();
             let agent_name = model
                 .agents
                 .iter()
                 .find(|a| a.id == id)
                 .map(|a| a.name.clone())
                 .unwrap_or_else(|| id.clone());
-            rt.spawn(async move {
-                if !cfg.is_ready() {
-                    let _ = tx.send(Msg::AgentDeleteFailed {
-                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
-                    });
-                    return;
-                }
-                let client = match crate::agentbuilder::AgentBuilderClient::new(&cfg) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(Msg::AgentDeleteFailed {
-                            error: e.to_string(),
-                        });
-                        return;
-                    }
-                };
+            spawn_api(rt, model.config.clone(), tx, |e| Msg::AgentDeleteFailed { error: e }, move |client, tx| async move {
                 if let Err(e) = client.delete_agent(&id).await {
-                    let _ = tx.send(Msg::AgentDeleteFailed {
-                        error: e.to_string(),
-                    });
+                    let _ = tx.send(Msg::AgentDeleteFailed { error: e.to_string() });
                     return;
                 }
-                let _ = tx.send(Msg::AgentDeleted {
-                    id,
-                    name: agent_name,
-                });
+                let _ = tx.send(Msg::AgentDeleted { name: agent_name });
             });
         }
     }

@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use ratatui::widgets::ListState;
 use ratatui_explorer::FileExplorer;
 
-use crate::agentbuilder::{AgentSummary, PluginSummary, SkillSummary, ToolSummary};
+use crate::agent_builder::{AgentSummary, PluginSummary, SkillSummary, ToolSummary};
 use crate::config::Config;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -21,7 +23,7 @@ pub enum ComponentsTab {
     Tools,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatRole {
     User,
     Assistant,
@@ -34,10 +36,12 @@ pub struct ChatEntry {
     pub content: String,
 }
 
+pub const MAX_CHAT_MESSAGES: usize = 2000;
+pub const MAX_SESSIONS: usize = 200;
+
 /// A single chat session tied to a specific agent.
 #[derive(Debug, Clone)]
 pub struct ChatSession {
-    pub id: usize,
     pub agent_id: String,
     pub agent_name: String,
     pub title: String,
@@ -62,14 +66,13 @@ pub struct Model {
     pub active: ActivePanel,
 
     // -- Config --
-    pub config: Config,
+    pub config: Arc<Config>,
     pub env_loaded: bool,
 
     // -- Chat sessions --
     pub sessions: Vec<ChatSession>,
     pub active_session_index: Option<usize>,
     pub sessions_list_state: ListState,
-    pub next_session_id: usize,
 
     // -- Conversations --
     pub conversations_loading: bool,
@@ -82,6 +85,8 @@ pub struct Model {
     pub agent_selected_index: usize,
     pub selected_agent_id: Option<String>,
     pub agents_list_state: ListState,
+    /// Monotonic counter incremented each time an agents load is requested.
+    pub agents_generation: u64,
 
     // -- Components panel --
     pub components_tab: ComponentsTab,
@@ -94,9 +99,22 @@ pub struct Model {
     pub components_plugins: Vec<PluginSummary>,
     pub components_plugins_loading: bool,
     pub components_plugins_error: Option<String>,
+    /// Monotonic counter incremented each time a components load is requested.
+    pub components_generation: u64,
 
     // -- Modal --
     pub modal: Option<Modal>,
+}
+
+impl ChatSession {
+    /// Push a chat entry, evicting the oldest messages if over the cap.
+    pub fn push_chat(&mut self, entry: ChatEntry) {
+        if self.chat.len() >= MAX_CHAT_MESSAGES {
+            let drain_count = self.chat.len() - MAX_CHAT_MESSAGES + 1;
+            self.chat.drain(..drain_count);
+        }
+        self.chat.push(entry);
+    }
 }
 
 impl Model {
@@ -110,6 +128,28 @@ impl Model {
     pub fn active_session_mut(&mut self) -> Option<&mut ChatSession> {
         self.active_session_index
             .and_then(|idx| self.sessions.get_mut(idx))
+    }
+
+    /// Evict the oldest non-active sessions to stay within `MAX_SESSIONS`.
+    pub fn enforce_session_cap(&mut self) {
+        while self.sessions.len() > MAX_SESSIONS {
+            let remove_idx = self
+                .sessions
+                .iter()
+                .enumerate()
+                .find(|(i, _)| Some(*i) != self.active_session_index)
+                .map(|(i, _)| i);
+            if let Some(idx) = remove_idx {
+                self.sessions.remove(idx);
+                if let Some(active) = self.active_session_index {
+                    if active > idx {
+                        self.active_session_index = Some(active - 1);
+                    }
+                }
+            } else {
+                break;
+            }
+        }
     }
 }
 
@@ -156,7 +196,7 @@ pub enum AgentEditorMode {
     Edit { agent_id: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CreateAgentTab {
     Prompt,
     Tools,
@@ -164,7 +204,7 @@ pub enum CreateAgentTab {
     Plugins,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CreateAgentField {
     Name,
     Description,

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseEventKind};
 use ratatui::widgets::ListState;
 
@@ -88,7 +90,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
 
         // -- Config --
         Msg::EnvLoaded { config } => {
-            model.config = config;
+            model.config = std::sync::Arc::new(config);
             model.env_loaded = true;
             if !model.config.is_ready() {
                 model.modal = Some(Modal::MissingEnv {
@@ -97,14 +99,19 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 return vec![];
             }
             model.agents_loading = true;
+            model.agents_generation += 1;
             model.components_tools_loading = true;
             model.components_skills_loading = true;
             model.components_plugins_loading = true;
+            model.components_generation += 1;
             vec![Cmd::LoadAgents, Cmd::LoadComponentsData]
         }
 
         // -- Agents --
-        Msg::AgentsLoaded { agents } => {
+        Msg::AgentsLoaded { agents, generation } => {
+            if generation < model.agents_generation {
+                return vec![];
+            }
             model.agents_loading = false;
             model.agents_loaded = true;
             model.agents_error = None;
@@ -128,7 +135,10 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             vec![]
         }
 
-        Msg::AgentsLoadFailed { error } => {
+        Msg::AgentsLoadFailed { error, generation } => {
+            if generation < model.agents_generation {
+                return vec![];
+            }
             model.agents_loading = false;
             model.agents_error = Some(error);
             vec![]
@@ -139,10 +149,8 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             if let Some(Modal::CreateAgent(state)) = &mut model.modal {
                 state.tools_loading = false;
                 state.tools_error = None;
-                let valid_ids: Vec<String> = tools.iter().map(|t| t.id.clone()).collect();
-                state
-                    .selected_tool_ids
-                    .retain(|id| valid_ids.contains(id));
+                let valid_ids: HashSet<&str> = tools.iter().map(|t| t.id.as_str()).collect();
+                state.selected_tool_ids.retain(|id| valid_ids.contains(id.as_str()));
                 state.tools = tools;
             }
             vec![]
@@ -160,8 +168,8 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             if let Some(Modal::CreateAgent(state)) = &mut model.modal {
                 state.skills_loading = false;
                 state.skills_error = None;
-                let valid_ids: Vec<String> = skills.iter().map(|s| s.id.clone()).collect();
-                state.selected_skill_ids.retain(|id| valid_ids.contains(id));
+                let valid_ids: HashSet<&str> = skills.iter().map(|s| s.id.as_str()).collect();
+                state.selected_skill_ids.retain(|id| valid_ids.contains(id.as_str()));
                 state.skills = skills;
             }
             vec![]
@@ -179,10 +187,8 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             if let Some(Modal::CreateAgent(state)) = &mut model.modal {
                 state.plugins_loading = false;
                 state.plugins_error = None;
-                let valid_ids: Vec<String> = plugins.iter().map(|p| p.id.clone()).collect();
-                state
-                    .selected_plugin_ids
-                    .retain(|id| valid_ids.contains(id));
+                let valid_ids: HashSet<&str> = plugins.iter().map(|p| p.id.as_str()).collect();
+                state.selected_plugin_ids.retain(|id| valid_ids.contains(id.as_str()));
                 state.plugins = plugins;
             }
             vec![]
@@ -201,7 +207,11 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             tools,
             skills,
             plugins,
+            generation,
         } => {
+            if generation < model.components_generation {
+                return vec![];
+            }
             model.components_tools_loading = false;
             model.components_skills_loading = false;
             model.components_plugins_loading = false;
@@ -214,7 +224,10 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             vec![]
         }
 
-        Msg::ComponentsDataFailed { error } => {
+        Msg::ComponentsDataFailed { error, generation } => {
+            if generation < model.components_generation {
+                return vec![];
+            }
             model.components_tools_loading = false;
             model.components_skills_loading = false;
             model.components_plugins_loading = false;
@@ -227,7 +240,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         // -- Agent CRUD results --
         Msg::AgentUpserted { agent, is_edit } => {
             if let Some(session) = model.active_session_mut() {
-                session.chat.push(ChatEntry {
+                session.push_chat(ChatEntry {
                     role: ChatRole::System,
                     content: format!(
                         "{} agent: {} ({})",
@@ -241,7 +254,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 model.modal = None;
             }
             model.selected_agent_id = Some(agent.id.clone());
-            model.config.agent_id = agent.id;
+            std::sync::Arc::make_mut(&mut model.config).agent_id = agent.id;
 
             model.agents_loaded = false;
             model.agents_loading = false;
@@ -249,11 +262,12 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             model.agents.clear();
             model.agent_selected_index = 0;
             model.agents_list_state = ListState::default();
+            model.agents_generation += 1;
             model.active = ActivePanel::Agents;
             vec![Cmd::LoadAgents]
         }
 
-        Msg::AgentUpsertFailed { error, is_edit: _ } => {
+        Msg::AgentUpsertFailed { error } => {
             if let Some(Modal::CreateAgent(state)) = &mut model.modal {
                 state.submitting = false;
                 state.error = Some(error);
@@ -261,10 +275,10 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             vec![]
         }
 
-        Msg::AgentDeleted { id: _, name } => {
+        Msg::AgentDeleted { name } => {
             model.modal = None;
             if let Some(session) = model.active_session_mut() {
-                session.chat.push(ChatEntry {
+                session.push_chat(ChatEntry {
                     role: ChatRole::System,
                     content: format!("Deleted agent: {name}"),
                 });
@@ -274,6 +288,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             model.agents.clear();
             model.agent_selected_index = 0;
             model.agents_list_state = ListState::default();
+            model.agents_generation += 1;
             vec![Cmd::LoadAgents]
         }
 
@@ -294,6 +309,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             model.components_tools_loading = true;
             model.components_skills_loading = true;
             model.components_plugins_loading = true;
+            model.components_generation += 1;
             vec![Cmd::LoadComponentsData]
         }
 
@@ -329,11 +345,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                     .title
                     .unwrap_or_else(|| "Untitled chat".to_string());
 
-                let session_id = model.next_session_id;
-                model.next_session_id += 1;
-
                 model.sessions.push(ChatSession {
-                    id: session_id,
                     agent_id: conv.agent_id.unwrap_or_default(),
                     agent_name,
                     title,
@@ -349,6 +361,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 });
             }
 
+            model.enforce_session_cap();
             if model.active_session_index.is_none() && !model.sessions.is_empty() {
                 model.active_session_index = Some(0);
             }
@@ -359,7 +372,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         Msg::ConversationsLoadFailed { error } => {
             model.conversations_loading = false;
             if let Some(session) = model.active_session_mut() {
-                session.chat.push(ChatEntry {
+                session.push_chat(ChatEntry {
                     role: ChatRole::System,
                     content: format!("Failed to load conversations: {error}"),
                 });
@@ -385,7 +398,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                         "assistant" | "ai" | "bot" => ChatRole::Assistant,
                         _ => ChatRole::System,
                     };
-                    session.chat.push(ChatEntry {
+                    session.push_chat(ChatEntry {
                         role: chat_role,
                         content,
                     });
@@ -404,7 +417,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 .find(|s| s.conversation_id.as_deref() == Some(&conversation_id))
             {
                 session.history_loading = false;
-                session.chat.push(ChatEntry {
+                session.push_chat(ChatEntry {
                     role: ChatRole::System,
                     content: format!("Failed to load history: {error}"),
                 });
@@ -420,7 +433,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             if let Some(session) = model.active_session_mut() {
                 session.waiting_for_response = false;
                 session.conversation_id = conversation_id.or(session.conversation_id.take());
-                session.chat.push(ChatEntry {
+                session.push_chat(ChatEntry {
                     role: ChatRole::Assistant,
                     content,
                 });
@@ -432,7 +445,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         Msg::PromptResponseFailed { error } => {
             if let Some(session) = model.active_session_mut() {
                 session.waiting_for_response = false;
-                session.chat.push(ChatEntry {
+                session.push_chat(ChatEntry {
                     role: ChatRole::Assistant,
                     content: format!("Error: {error}"),
                 });
@@ -486,10 +499,7 @@ fn handle_agents_panel_key(
                 let agent_id = model.agents[idx].id.clone();
                 let agent_name = model.agents[idx].name.clone();
 
-                let session_id = model.next_session_id;
-                model.next_session_id += 1;
                 let session = ChatSession {
-                    id: session_id,
                     agent_id: agent_id.clone(),
                     agent_name: agent_name.clone(),
                     title: "New chat".to_string(),
@@ -509,10 +519,11 @@ fn handle_agents_panel_key(
                 model.sessions.push(session);
                 let new_idx = model.sessions.len() - 1;
                 model.active_session_index = Some(new_idx);
+                model.enforce_session_cap();
                 sync_sessions_list_state(model);
 
                 model.selected_agent_id = Some(agent_id.clone());
-                model.config.agent_id = agent_id;
+                std::sync::Arc::make_mut(&mut model.config).agent_id = agent_id;
                 model.active = ActivePanel::Chat;
             }
             Some(vec![])
@@ -589,6 +600,7 @@ fn handle_agents_panel_key(
             model.agents_loading = true;
             model.agents_loaded = false;
             model.agents_error = None;
+            model.agents_generation += 1;
             Some(vec![Cmd::LoadAgents])
         }
         _ => None,
@@ -719,12 +731,12 @@ fn snap_session_to_filtered(model: &mut Model) {
 
 /// When switching sessions, update the selected agent to match the session's agent.
 fn activate_session_agent(model: &mut Model) {
-    let ids = model
+    let agent_id = model
         .active_session()
         .map(|s| s.agent_id.clone());
-    if let Some(agent_id) = ids {
+    if let Some(agent_id) = agent_id {
         model.selected_agent_id = Some(agent_id.clone());
-        model.config.agent_id = agent_id;
+        std::sync::Arc::make_mut(&mut model.config).agent_id = agent_id;
     }
 }
 
@@ -909,7 +921,7 @@ fn update_create_agent_modal(
             if let Some(pos) = TAB_ORDER.iter().position(|t| *t == state.tab)
                 && pos > 0
             {
-                state.tab = TAB_ORDER[pos - 1].clone();
+                state.tab = TAB_ORDER[pos - 1];
                 return (false, vec![]);
             }
         }
@@ -917,7 +929,7 @@ fn update_create_agent_modal(
             if let Some(pos) = TAB_ORDER.iter().position(|t| *t == state.tab)
                 && pos + 1 < TAB_ORDER.len()
             {
-                state.tab = TAB_ORDER[pos + 1].clone();
+                state.tab = TAB_ORDER[pos + 1];
                 return (false, vec![]);
             }
         }
@@ -1191,11 +1203,14 @@ fn handle_chat_input_key(
 
     match key.code {
         KeyCode::Enter => {
+            if session.waiting_for_response {
+                return Some(vec![]);
+            }
             let text = session.input_buffer.trim().to_string();
             if text.is_empty() {
                 return Some(vec![]);
             }
-            session.chat.push(ChatEntry {
+            session.push_chat(ChatEntry {
                 role: ChatRole::User,
                 content: text.clone(),
             });
@@ -1272,6 +1287,8 @@ fn handle_chat_input_key(
         }
 
         KeyCode::Tab | KeyCode::BackTab => None,
+
+        KeyCode::Esc => None,
 
         _ => Some(vec![]),
     }

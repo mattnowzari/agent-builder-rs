@@ -22,10 +22,7 @@ pub struct ConversationMessage {
 
 #[derive(Debug, Clone)]
 pub struct ConversationDetail {
-    pub summary: ConversationSummary,
     pub messages: Vec<ConversationMessage>,
-    /// Raw JSON response for diagnostic purposes.
-    pub raw_response: String,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +40,7 @@ pub struct AgentSummary {
 pub struct ToolSummary {
     pub id: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub tags: Vec<String>,
     #[serde(rename = "type", default)]
     pub tool_type: String,
@@ -113,6 +111,8 @@ impl AgentBuilderClient {
 
         let http = reqwest::Client::builder()
             .default_headers(headers)
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
             .danger_accept_invalid_certs(cfg.insecure_tls)
             .danger_accept_invalid_hostnames(cfg.insecure_tls)
             .build()?;
@@ -365,7 +365,7 @@ impl AgentBuilderClient {
 
         let v: serde_json::Value = serde_json::from_str(&text)
             .context("failed to parse get conversation response JSON")?;
-        parse_conversation_detail(v, text).context("failed to parse conversation detail")
+        parse_conversation_detail(v).context("failed to parse conversation detail")
     }
 
     pub async fn create_tool(&self, req: &CreateToolRequest) -> Result<ToolSummary> {
@@ -515,7 +515,7 @@ fn parse_agents(v: serde_json::Value) -> Result<Vec<AgentSummary>> {
         });
     }
 
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
     Ok(out)
 }
 
@@ -591,40 +591,8 @@ fn parse_conversations(v: serde_json::Value) -> Result<Vec<ConversationSummary>>
     Ok(out)
 }
 
-fn parse_conversation_detail(v: serde_json::Value, raw: String) -> Result<ConversationDetail> {
+fn parse_conversation_detail(v: serde_json::Value) -> Result<ConversationDetail> {
     let obj = v.as_object().context("conversation detail is not an object")?;
-
-    let id = obj
-        .get("id")
-        .or_else(|| obj.get("conversation_id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    let agent_id = obj
-        .get("agent_id")
-        .or_else(|| obj.get("agentId"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    let title = obj
-        .get("title")
-        .or_else(|| obj.get("name"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    let updated_at = obj
-        .get("updated_at")
-        .or_else(|| obj.get("updatedAt"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    let summary = ConversationSummary {
-        id,
-        agent_id,
-        title,
-        updated_at,
-    };
 
     let mut messages = Vec::new();
 
@@ -744,11 +712,7 @@ fn parse_conversation_detail(v: serde_json::Value, raw: String) -> Result<Conver
         });
     }
 
-    Ok(ConversationDetail {
-        summary,
-        messages,
-        raw_response: raw,
-    })
+    Ok(ConversationDetail { messages })
 }
 
 // --- Request / Response types ---
@@ -851,11 +815,29 @@ struct CreateAgentResponse {
 // YAML tool loading
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolKind {
+    Esql,
+    IndexSearch,
+    Workflow,
+}
+
+impl std::fmt::Display for ToolKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ToolKind::Esql => f.write_str("esql"),
+            ToolKind::IndexSearch => f.write_str("index_search"),
+            ToolKind::Workflow => f.write_str("workflow"),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ToolYaml {
     id: String,
     #[serde(rename = "type")]
-    tool_type: String,
+    tool_type: ToolKind,
     #[serde(default)]
     description: String,
     #[serde(default)]
@@ -880,7 +862,7 @@ struct EsqlParamYaml {
 pub struct CreateToolRequest {
     pub id: String,
     #[serde(rename = "type")]
-    pub tool_type: String,
+    pub tool_type: ToolKind,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub description: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -892,11 +874,10 @@ pub fn parse_tool_yaml(contents: &str) -> Result<CreateToolRequest> {
     let yaml: ToolYaml =
         serde_yaml::from_str(contents).context("failed to parse YAML tool definition")?;
 
-    let configuration = match yaml.tool_type.as_str() {
-        "esql" => build_esql_config(&yaml)?,
-        "index_search" => build_index_search_config(&yaml)?,
-        "workflow" => build_workflow_config(&yaml)?,
-        other => anyhow::bail!("unsupported tool type: {other} (expected esql, index_search, or workflow)"),
+    let configuration = match yaml.tool_type {
+        ToolKind::Esql => build_esql_config(&yaml)?,
+        ToolKind::IndexSearch => build_index_search_config(&yaml)?,
+        ToolKind::Workflow => build_workflow_config(&yaml)?,
     };
 
     Ok(CreateToolRequest {

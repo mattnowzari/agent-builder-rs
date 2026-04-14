@@ -4,11 +4,8 @@ mod msg;
 mod update;
 mod view;
 
-pub use cmd::Cmd;
-pub use model::{
-    ActivePanel, AgentEditorMode, ChatEntry, ChatRole, ChatSession, ComponentsTab,
-    ConfirmDeleteAgentModal, CreateAgentModal, CreateAgentTab, ImportModal, Modal, Model,
-};
-pub use msg::Msg;
-pub use update::update;
-pub use view::view;
+pub(crate) use cmd::Cmd;
+pub(crate) use model::{ComponentsTab, Model};
+pub(crate) use msg::Msg;
+pub(crate) use update::update;
+pub(crate) use view::view;

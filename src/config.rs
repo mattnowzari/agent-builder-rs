@@ -1,7 +1,6 @@
 #[derive(Debug, Clone)]
 pub struct Config {
     pub kibana_url: Option<String>,
-    pub es_host: Option<String>,
     pub api_key: Option<String>,
     pub space: Option<String>,
     pub agent_id: String,
@@ -13,7 +12,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             kibana_url: None,
-            es_host: None,
             api_key: None,
             space: None,
             agent_id: "elastic-ai-agent".to_string(),
@@ -43,9 +41,13 @@ pub fn load_from_env() -> Config {
     let _ = dotenvy::dotenv();
 
     let mut cfg = Config {
-        kibana_url: env_first_nonempty(&["KIBANA_URL"]),
-        es_host: env_first_nonempty(&["ES_HOST", "ELASTICSEARCH_HOST", "ELASTIC_HOST"]),
-        api_key: env_first_nonempty(&["API_KEY"]),
+        kibana_url: env_first_nonempty(&[
+            "KIBANA_URL",
+            "ES_HOST",
+            "ELASTICSEARCH_HOST",
+            "ELASTIC_HOST",
+        ]),
+        api_key: env_first_nonempty(&["API_KEY", "ES_API_KEY"]),
         space: env_first_nonempty(&["KIBANA_SPACE", "SPACE"]),
         insecure_tls: env_bool(&["KIBANA_INSECURE_TLS", "INSECURE_TLS"], false),
         ..Config::default()

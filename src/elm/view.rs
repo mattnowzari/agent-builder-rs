@@ -182,9 +182,8 @@ fn render_chats_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
         " Chats (loading...) [↑↓] [Enter] [x close] ".to_string()
     } else if is_filtered {
         format!(
-            " Chats ({}/{}) [↑↓] [Enter] [x close] ",
-            filtered.len(),
-            model.sessions.len()
+            " Chats ({}) [↑↓] [Enter] [x close] ",
+            filtered.len()
         )
     } else {
         format!(" Chats ({}) [↑↓] [Enter] [x close] ", model.sessions.len())
@@ -562,10 +561,14 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     }
     let mut lines = Vec::new();
     let mut remaining = text;
-    while remaining.chars().count() > max_width {
-        let break_at: usize = remaining.chars().take(max_width).map(|c| c.len_utf8()).sum();
-        lines.push(remaining[..break_at].to_string());
-        remaining = &remaining[break_at..];
+    loop {
+        match remaining.char_indices().nth(max_width).map(|(i, _)| i) {
+            Some(byte_idx) => {
+                lines.push(remaining[..byte_idx].to_string());
+                remaining = &remaining[byte_idx..];
+            }
+            None => break,
+        }
     }
     lines.push(remaining.to_string());
     lines
