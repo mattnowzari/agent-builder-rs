@@ -1,8 +1,8 @@
-# Importing Tools and Skills
+# Importing Components
 
-The TUI supports importing custom tools and skills from YAML definition files. This document covers the YAML format for each component type, expected folder layout, and how to perform an import.
+The TUI supports importing custom tools and skills from local YAML files or directly from a GitHub repository, and installing plugins from a URL. This document covers the YAML format for each component type, expected folder layout, and how to perform imports.
 
-## How to Import
+## How to Import (Local File)
 
 1. Navigate to the **Components** panel (use `Tab` to cycle panels)
 2. Switch to the desired tab (**Tools** or **Skills**) using `◀` / `▶`
@@ -301,7 +301,7 @@ The Kibana Agent Builder API downloads the archive, parses the manifest, extract
 
 ## Importing from GitHub
 
-Tools and skills can be imported directly from a public GitHub repository using the `g` keybinding. The TUI fetches files via `raw.githubusercontent.com`, so no GitHub token is needed for public repos.
+Tools and skills can be imported directly from a **public** GitHub repository using the `g` keybinding. The TUI fetches raw file contents via `raw.githubusercontent.com`, so no GitHub token is needed for public repos.
 
 ### How to Import from GitHub
 
@@ -309,10 +309,13 @@ Tools and skills can be imported directly from a public GitHub repository using 
 2. Switch to the desired tab (**Tools** or **Skills**) using `◀` / `▶`
 3. Press `g` to open the GitHub import dialog
 4. Paste a GitHub file or folder URL and press `Enter`
+5. The TUI will fetch the YAML (and any referenced markdown files for skills), create the component via the Kibana API, and display a success or error modal
 
 > For **Plugins**, pressing `g` opens the same URL install dialog as `i` (Kibana fetches plugin archives server-side).
 
 ### Supported URL Formats
+
+The `g` dialog accepts standard GitHub URLs — just copy the URL from your browser when viewing the file or folder on GitHub.
 
 | Component | URL Pattern | Example |
 |-----------|-------------|---------|
@@ -320,21 +323,64 @@ Tools and skills can be imported directly from a public GitHub repository using 
 | **Skill** | `/blob/` (YAML file) | `https://github.com/org/repo/blob/main/skills/my-skill/my-skill.yaml` |
 | **Skill** | `/tree/` (folder) | `https://github.com/org/repo/tree/main/skills/my-skill` |
 
+Both `https://github.com/...` and `http://github.com/...` are accepted. The URL must contain either `/blob/` (pointing to a file) or `/tree/` (pointing to a directory).
+
 ### Skill Folder Convention
 
-When you provide a `/tree/` (folder) URL, the TUI derives the YAML filename by convention: it looks for a file named `<folder-name>.yaml` inside the folder. For example:
+When you provide a `/tree/` (folder) URL for a skill, the TUI derives the YAML filename by convention: it looks for a file named `<folder-name>.yaml` inside the folder. For example:
 
 - URL: `https://github.com/org/repo/tree/main/skills/my-skill`
 - Expected YAML: `skills/my-skill/my-skill.yaml`
 
-The `content` and `referenced_content` paths in the YAML are then resolved relative to that YAML file's location in the repo.
+The `content` and `referenced_content` paths in the YAML are then resolved relative to that YAML file's location in the repo, just like local imports.
+
+Alternatively, you can point directly at the YAML file using a `/blob/` URL — this skips the convention-based lookup.
 
 ### What Happens on GitHub Import
 
-1. The GitHub URL is parsed to extract `owner`, `repo`, `ref`, and `path`
-2. The YAML file is fetched from `raw.githubusercontent.com`
-3. For skills, the `content` markdown and any `referenced_content` files are fetched from the same repo
-4. The parsed content is sent to the Kibana Agent Builder API via `create_tool` or `create_skill`
+1. The GitHub URL is parsed to extract `owner`, `repo`, `ref` (branch or tag), and `path`
+2. The raw URL is constructed: `https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}`
+3. The YAML file is fetched and parsed
+4. **For tools:** the parsed YAML is sent to the Kibana Agent Builder API via `create_tool`
+5. **For skills:** the `content` markdown file and any `referenced_content` markdown files are also fetched from the same repo (paths resolved relative to the YAML), then the full payload is sent to the Kibana API via `create_skill`
+
+### GitHub Import Examples
+
+**Importing a tool from GitHub:**
+
+```
+https://github.com/myorg/security-tools/blob/main/tools/esql-user-lookup.yaml
+```
+
+The TUI fetches the single YAML file and creates the tool.
+
+**Importing a skill folder from GitHub:**
+
+```
+https://github.com/myorg/security-tools/tree/main/skills/incident-response
+```
+
+The TUI:
+1. Derives the YAML path → `skills/incident-response/incident-response.yaml`
+2. Fetches and parses the YAML
+3. Fetches `skills/incident-response/incident-response.md` (the `content` file)
+4. Fetches `skills/incident-response/runbook.md` (a `referenced_content` file)
+5. Creates the skill with all content inlined
+
+**Importing a skill YAML directly:**
+
+```
+https://github.com/myorg/security-tools/blob/v2.0/skills/incident-response/incident-response.yaml
+```
+
+Same as above, but uses the explicit `/blob/` URL and a tag (`v2.0`) instead of a branch.
+
+### Notes
+
+- **Public repos only** — private repositories require authentication, which is not currently supported. The TUI fetches files anonymously from `raw.githubusercontent.com`.
+- **Branch, tag, or commit** — the `ref` segment in the URL can be a branch name (`main`), a tag (`v1.0`), or a full commit SHA.
+- **Tool URLs must use `/blob/`** — tools are single files, so folder (`/tree/`) URLs are not accepted for tool imports.
+- **Same YAML format** — the YAML schema is identical whether you import from a local file or from GitHub. See the [Tool Import](#tool-import) and [Skill Import](#skill-import) sections above for the full schema reference.
 
 ---
 
