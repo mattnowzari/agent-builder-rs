@@ -10,8 +10,8 @@ use ratatui_explorer::{FileExplorerBuilder, Theme};
 use super::cmd::Cmd;
 use super::model::{
     ActivePanel, AgentEditorMode, ChatEntry, ChatRole, ChatSession, ComponentsTab,
-    ConfirmDeleteAgentModal, CreateAgentField, CreateAgentModal, CreateAgentTab, ImportModal, Modal,
-    Model,
+    ConfirmDeleteAgentModal, CreateAgentField, CreateAgentModal, CreateAgentTab, GitHubImportModal,
+    ImportModal, InstallPluginModal, Modal, Model,
 };
 use super::msg::Msg;
 use super::view::filtered_session_indices;
@@ -341,9 +341,57 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             vec![]
         }
 
+        Msg::PluginInstalledFromFile { plugin } => {
+            model.modal = Some(Modal::Info {
+                title: "Plugin Installed".to_string(),
+                message: format!("Successfully installed plugin: {}", plugin.name),
+            });
+            model.components_tools_loading = true;
+            model.components_skills_loading = true;
+            model.components_plugins_loading = true;
+            model.components_generation += 1;
+            vec![Cmd::LoadComponentsData]
+        }
+
+        Msg::PluginInstallFromFileFailed { error } => {
+            model.modal = Some(Modal::Error {
+                title: "Plugin Import Failed".to_string(),
+                message: error,
+            });
+            vec![]
+        }
+
         // -- Conversations --
         Msg::ConversationsLoaded { conversations } => {
             model.conversations_loading = false;
+
+            let server_ids: std::collections::HashSet<&str> =
+                conversations.iter().map(|c| c.id.as_str()).collect();
+
+            // Remove server-sourced sessions that no longer exist on the server.
+            let mut i = 0;
+            while i < model.sessions.len() {
+                let sess = &model.sessions[i];
+                let stale = sess.from_server
+                    && sess
+                        .conversation_id
+                        .as_deref()
+                        .is_some_and(|cid| !server_ids.contains(cid));
+                if stale {
+                    model.sessions.remove(i);
+                    match model.active_session_index {
+                        Some(active) if active == i => {
+                            model.active_session_index = None;
+                        }
+                        Some(active) if active > i => {
+                            model.active_session_index = Some(active - 1);
+                        }
+                        _ => {}
+                    }
+                } else {
+                    i += 1;
+                }
+            }
 
             for conv in conversations {
                 let already_exists = model
@@ -814,39 +862,67 @@ fn handle_components_panel_key(
             Some(vec![Cmd::LoadComponentsData])
         }
         KeyCode::Char('i') => {
-            let theme = Theme::default()
-                .add_default_title()
-                .with_block(Block::default().borders(Borders::NONE))
-                .with_item_style(Style::default().fg(Color::White))
-                .with_dir_style(Style::default().fg(Color::Cyan))
-                .with_highlight_item_style(
-                    Style::default()
-                        .fg(Color::White)
-                        .bg(Color::DarkGray)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .with_highlight_dir_style(
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .bg(Color::DarkGray)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .with_highlight_symbol("▶ ");
+            if model.components_tab == ComponentsTab::Plugins {
+                model.modal = Some(Modal::InstallPlugin(InstallPluginModal {
+                    url_buffer: String::new(),
+                    cursor: 0,
+                    error_message: None,
+                    installing: false,
+                }));
+            } else {
+                let theme = Theme::default()
+                    .add_default_title()
+                    .with_block(Block::default().borders(Borders::NONE))
+                    .with_item_style(Style::default().fg(Color::White))
+                    .with_dir_style(Style::default().fg(Color::Cyan))
+                    .with_highlight_item_style(
+                        Style::default()
+                            .fg(Color::White)
+                            .bg(Color::DarkGray)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                    .with_highlight_dir_style(
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .bg(Color::DarkGray)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                    .with_highlight_symbol("▶ ");
 
-            match FileExplorerBuilder::build_with_theme(theme) {
-                Ok(fe) => {
-                    model.modal = Some(Modal::Import(Box::new(ImportModal {
-                        file_explorer: fe,
-                        component_type: model.components_tab,
-                        error_message: None,
-                    })));
+                match FileExplorerBuilder::build_with_theme(theme) {
+                    Ok(fe) => {
+                        model.modal = Some(Modal::Import(Box::new(ImportModal {
+                            file_explorer: fe,
+                            component_type: model.components_tab,
+                            error_message: None,
+                        })));
+                    }
+                    Err(e) => {
+                        model.modal = Some(Modal::Error {
+                            title: "Import Error".to_string(),
+                            message: format!("Failed to open file explorer: {e}"),
+                        });
+                    }
                 }
-                Err(e) => {
-                    model.modal = Some(Modal::Error {
-                        title: "Import Error".to_string(),
-                        message: format!("Failed to open file explorer: {e}"),
-                    });
-                }
+            }
+            Some(vec![])
+        }
+        KeyCode::Char('g') => {
+            if model.components_tab == ComponentsTab::Plugins {
+                model.modal = Some(Modal::InstallPlugin(InstallPluginModal {
+                    url_buffer: String::new(),
+                    cursor: 0,
+                    error_message: None,
+                    installing: false,
+                }));
+            } else {
+                model.modal = Some(Modal::GitHubImport(GitHubImportModal {
+                    url_buffer: String::new(),
+                    cursor: 0,
+                    component_type: model.components_tab,
+                    error_message: None,
+                    importing: false,
+                }));
             }
             Some(vec![])
         }
@@ -931,6 +1007,169 @@ fn update_modal_key(model: &mut Model, key: ratatui::crossterm::event::KeyEvent)
             let event = ratatui::crossterm::event::Event::Key(key);
             let _ = state.file_explorer.handle(&event);
             vec![]
+        }
+
+        Modal::InstallPlugin(state) => {
+            if key.code == KeyCode::Esc {
+                model.modal = None;
+                return vec![];
+            }
+
+            if state.installing {
+                return vec![];
+            }
+
+            match key.code {
+                KeyCode::Enter => {
+                    let url = state.url_buffer.trim().to_string();
+                    if url.is_empty() {
+                        state.error_message = Some("URL is required.".to_string());
+                    } else {
+                        state.installing = true;
+                        state.error_message = None;
+                        return vec![Cmd::InstallPluginFromUrl { url }];
+                    }
+                    vec![]
+                }
+                KeyCode::Char(c) => {
+                    state.url_buffer.insert(state.cursor, c);
+                    state.cursor += c.len_utf8();
+                    state.error_message = None;
+                    vec![]
+                }
+                KeyCode::Backspace => {
+                    if state.cursor > 0 {
+                        let prev = state.url_buffer[..state.cursor]
+                            .chars()
+                            .last()
+                            .map(|c| c.len_utf8())
+                            .unwrap_or(0);
+                        state.cursor -= prev;
+                        state.url_buffer.remove(state.cursor);
+                    }
+                    state.error_message = None;
+                    vec![]
+                }
+                KeyCode::Delete => {
+                    if state.cursor < state.url_buffer.len() {
+                        state.url_buffer.remove(state.cursor);
+                    }
+                    vec![]
+                }
+                KeyCode::Left => {
+                    if state.cursor > 0 {
+                        let prev = state.url_buffer[..state.cursor]
+                            .chars()
+                            .last()
+                            .map(|c| c.len_utf8())
+                            .unwrap_or(0);
+                        state.cursor -= prev;
+                    }
+                    vec![]
+                }
+                KeyCode::Right => {
+                    if state.cursor < state.url_buffer.len() {
+                        let next = state.url_buffer[state.cursor..]
+                            .chars()
+                            .next()
+                            .map(|c| c.len_utf8())
+                            .unwrap_or(0);
+                        state.cursor += next;
+                    }
+                    vec![]
+                }
+                KeyCode::Home => {
+                    state.cursor = 0;
+                    vec![]
+                }
+                KeyCode::End => {
+                    state.cursor = state.url_buffer.len();
+                    vec![]
+                }
+                _ => vec![],
+            }
+        }
+
+        Modal::GitHubImport(state) => {
+            if key.code == KeyCode::Esc {
+                model.modal = None;
+                return vec![];
+            }
+
+            if state.importing {
+                return vec![];
+            }
+
+            match key.code {
+                KeyCode::Enter => {
+                    let url = state.url_buffer.trim().to_string();
+                    if url.is_empty() {
+                        state.error_message = Some("URL is required.".to_string());
+                    } else {
+                        state.importing = true;
+                        state.error_message = None;
+                        let component_type = state.component_type;
+                        return vec![Cmd::ImportComponentFromGitHub { url, component_type }];
+                    }
+                    vec![]
+                }
+                KeyCode::Char(c) => {
+                    state.url_buffer.insert(state.cursor, c);
+                    state.cursor += c.len_utf8();
+                    state.error_message = None;
+                    vec![]
+                }
+                KeyCode::Backspace => {
+                    if state.cursor > 0 {
+                        let prev = state.url_buffer[..state.cursor]
+                            .chars()
+                            .last()
+                            .map(|c| c.len_utf8())
+                            .unwrap_or(0);
+                        state.cursor -= prev;
+                        state.url_buffer.remove(state.cursor);
+                    }
+                    state.error_message = None;
+                    vec![]
+                }
+                KeyCode::Delete => {
+                    if state.cursor < state.url_buffer.len() {
+                        state.url_buffer.remove(state.cursor);
+                    }
+                    vec![]
+                }
+                KeyCode::Left => {
+                    if state.cursor > 0 {
+                        let prev = state.url_buffer[..state.cursor]
+                            .chars()
+                            .last()
+                            .map(|c| c.len_utf8())
+                            .unwrap_or(0);
+                        state.cursor -= prev;
+                    }
+                    vec![]
+                }
+                KeyCode::Right => {
+                    if state.cursor < state.url_buffer.len() {
+                        let next = state.url_buffer[state.cursor..]
+                            .chars()
+                            .next()
+                            .map(|c| c.len_utf8())
+                            .unwrap_or(0);
+                        state.cursor += next;
+                    }
+                    vec![]
+                }
+                KeyCode::Home => {
+                    state.cursor = 0;
+                    vec![]
+                }
+                KeyCode::End => {
+                    state.cursor = state.url_buffer.len();
+                    vec![]
+                }
+                _ => vec![],
+            }
         }
     }
 }

@@ -9,7 +9,7 @@ use ratatui::widgets::{
 
 use super::model::{
     ActivePanel, AgentEditorMode, ChatRole, ComponentsTab, CreateAgentField, CreateAgentModal,
-    CreateAgentTab, ImportModal, Modal, Model,
+    CreateAgentTab, GitHubImportModal, ImportModal, InstallPluginModal, Modal, Model,
 };
 
 const BORDER_NORMAL: Color = Color::Gray;
@@ -270,9 +270,24 @@ fn render_center_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
     let is_focused = model.active == ActivePanel::Chat;
     let style = panel_style(model.active, ActivePanel::Chat);
 
+    let border_overhead: u16 = 2;
+    let inner_width = area.width.saturating_sub(border_overhead) as usize;
+
+    let input_chars = model
+        .active_session()
+        .map(|s| s.input_buffer.chars().count())
+        .unwrap_or(0);
+
+    let wrapped_lines = if inner_width > 0 {
+        (input_chars / inner_width) as u16 + 1
+    } else {
+        1
+    };
+    let input_height = wrapped_lines.clamp(3, 10) + border_overhead;
+
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(4), Constraint::Length(5)])
+        .constraints([Constraint::Min(4), Constraint::Length(input_height)])
         .split(area);
 
     render_chat_history(frame, model, style, rows[0]);
@@ -584,7 +599,7 @@ fn render_components_panel(frame: &mut Frame, model: &Model, area: Rect) {
     let style = panel_style(model.active, ActivePanel::Components);
 
     let outer_block = Block::default()
-        .title(" Components [◀-▶ switch tab] [i import] [Ctrl+R refresh] ")
+        .title(" Components [◀-▶ switch tab] [i import] [g GitHub] [Ctrl+R refresh] ")
         .borders(Borders::ALL)
         .border_style(style);
 
@@ -840,6 +855,14 @@ fn render_modal(frame: &mut Frame, modal: &mut Modal) {
         Modal::Import(state) => {
             render_import_modal(frame, state);
         }
+
+        Modal::InstallPlugin(state) => {
+            render_install_plugin_modal(frame, state);
+        }
+
+        Modal::GitHubImport(state) => {
+            render_github_import_modal(frame, state);
+        }
     }
 }
 
@@ -910,6 +933,162 @@ fn render_import_modal(frame: &mut Frame, state: &ImportModal) {
 
     let footer = Paragraph::new(footer_lines).wrap(Wrap { trim: false });
     frame.render_widget(footer, footer_area);
+}
+
+fn render_install_plugin_modal(frame: &mut Frame, state: &InstallPluginModal) {
+    let rect = centered_rect(60, 30, frame.area());
+    frame.render_widget(Clear, rect);
+
+    let outer_block = Block::default()
+        .title(" Install Plugin from URL ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = outer_block.inner(rect);
+    frame.render_widget(outer_block, rect);
+
+    if inner.height < 4 || inner.width < 10 {
+        return;
+    }
+
+    let has_error = state.error_message.is_some();
+    let mut constraints = vec![
+        Constraint::Length(1), // label
+        Constraint::Length(1), // gap
+        Constraint::Length(3), // input box
+    ];
+    if has_error {
+        constraints.push(Constraint::Length(1)); // error line
+    }
+    if state.installing {
+        constraints.push(Constraint::Length(1)); // status line
+    }
+    constraints.push(Constraint::Length(1)); // help line
+    constraints.push(Constraint::Min(0)); // spacer
+
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(inner);
+
+    let label = Paragraph::new("Enter a GitHub URL or direct ZIP URL:");
+    frame.render_widget(label, layout[0]);
+
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Gray));
+    let input_inner = input_block.inner(layout[2]);
+    let input = Paragraph::new(state.url_buffer.as_str()).block(input_block);
+    frame.render_widget(input, layout[2]);
+
+    if !state.installing {
+        let cursor_x = input_inner.x + state.url_buffer[..state.cursor].chars().count() as u16;
+        frame.set_cursor_position(Position::new(cursor_x.min(input_inner.right().saturating_sub(1)), input_inner.y));
+    }
+
+    let mut row = 3;
+    if has_error {
+        let err = Paragraph::new(state.error_message.as_deref().unwrap_or(""))
+            .style(Style::default().fg(Color::Red));
+        frame.render_widget(err, layout[row]);
+        row += 1;
+    }
+    if state.installing {
+        let status = Paragraph::new("Installing...")
+            .style(Style::default().fg(Color::Yellow));
+        frame.render_widget(status, layout[row]);
+        row += 1;
+    }
+    let help = Paragraph::new("[Enter] Install  [Esc] Cancel")
+        .style(Style::default().fg(SUBTLE));
+    frame.render_widget(help, layout[row]);
+}
+
+fn render_github_import_modal(frame: &mut Frame, state: &GitHubImportModal) {
+    let rect = centered_rect(65, 35, frame.area());
+    frame.render_widget(Clear, rect);
+
+    let type_label = match state.component_type {
+        ComponentsTab::Plugins => "Plugin",
+        ComponentsTab::Skills => "Skill",
+        ComponentsTab::Tools => "Tool",
+    };
+
+    let outer_block = Block::default()
+        .title(format!(" Import {type_label} from GitHub "))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    let inner = outer_block.inner(rect);
+    frame.render_widget(outer_block, rect);
+
+    if inner.height < 5 || inner.width < 10 {
+        return;
+    }
+
+    let has_error = state.error_message.is_some();
+    let mut constraints = vec![
+        Constraint::Length(1), // label
+        Constraint::Length(1), // example
+        Constraint::Length(1), // gap
+        Constraint::Length(3), // input box
+    ];
+    if has_error {
+        constraints.push(Constraint::Length(1));
+    }
+    if state.importing {
+        constraints.push(Constraint::Length(1));
+    }
+    constraints.push(Constraint::Length(1)); // help
+    constraints.push(Constraint::Min(0));
+
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(inner);
+
+    let label = Paragraph::new("Paste a GitHub file or folder URL:");
+    frame.render_widget(label, layout[0]);
+
+    let example_text = match state.component_type {
+        ComponentsTab::Tools => "e.g. https://github.com/org/repo/blob/main/tools/my-tool.yaml",
+        ComponentsTab::Skills => "e.g. https://github.com/org/repo/tree/main/skills/my-skill",
+        ComponentsTab::Plugins => "e.g. https://github.com/org/repo",
+    };
+    let example = Paragraph::new(example_text).style(Style::default().fg(SUBTLE));
+    frame.render_widget(example, layout[1]);
+
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Gray));
+    let input_inner = input_block.inner(layout[3]);
+    let input = Paragraph::new(state.url_buffer.as_str()).block(input_block);
+    frame.render_widget(input, layout[3]);
+
+    if !state.importing {
+        let cursor_x = input_inner.x + state.url_buffer[..state.cursor].chars().count() as u16;
+        frame.set_cursor_position(Position::new(
+            cursor_x.min(input_inner.right().saturating_sub(1)),
+            input_inner.y,
+        ));
+    }
+
+    let mut row = 4;
+    if has_error {
+        let err = Paragraph::new(state.error_message.as_deref().unwrap_or(""))
+            .style(Style::default().fg(Color::Red));
+        frame.render_widget(err, layout[row]);
+        row += 1;
+    }
+    if state.importing {
+        let status =
+            Paragraph::new("Fetching from GitHub...").style(Style::default().fg(Color::Yellow));
+        frame.render_widget(status, layout[row]);
+        row += 1;
+    }
+    let help =
+        Paragraph::new("[Enter] Import  [Esc] Cancel").style(Style::default().fg(SUBTLE));
+    frame.render_widget(help, layout[row]);
 }
 
 fn render_create_agent_modal(frame: &mut Frame, state: &mut CreateAgentModal) {

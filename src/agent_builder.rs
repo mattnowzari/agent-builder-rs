@@ -136,6 +136,7 @@ impl AgentBuilderClient {
         }
     }
 
+
     pub async fn converse(
         &self,
         input: &str,
@@ -369,6 +370,31 @@ impl AgentBuilderClient {
         let parsed: ListPluginsResponse =
             serde_json::from_str(&text).context("failed to parse list plugins response JSON")?;
         Ok(parsed.results)
+    }
+
+    pub async fn install_plugin(&self, plugin_url: &str) -> Result<PluginSummary> {
+        let url = self.api_url("plugins/install");
+
+        let body = serde_json::json!({ "url": plugin_url });
+
+        let resp = self
+            .http
+            .post(&url)
+            .timeout(API_TIMEOUT)
+            .json(&body)
+            .send()
+            .await
+            .context("failed to send plugin install request")?;
+
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("Agent Builder API error {status}: {text}");
+        }
+
+        let plugin: PluginSummary =
+            serde_json::from_str(&text).context("failed to parse plugin install response JSON")?;
+        Ok(plugin)
     }
 
     pub async fn list_conversations(&self) -> Result<Vec<ConversationSummary>> {

@@ -1,0 +1,8 @@
+id: slack-and-github
+name: Slack and GitHub Connector
+description: "Enables seamless Slack and GitHub usage by discovering and attaching connectors via the Semantic Metadata Layer (SML) — no chunk IDs required from the user"
+content: ./slack-and-github.md
+referenced_content:
+  - name: sml-reference
+    path: ./sml-reference.md
+tool_ids: []

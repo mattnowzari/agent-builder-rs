@@ -396,7 +396,187 @@ fn execute_cmd(
                         }
                     }
                     ComponentsTab::Plugins => {
-                        let _ = tx.send(Msg::ToolCreateFromFileFailed { error: "Plugin import from YAML is not yet implemented.".to_string() });
+                        // Plugins are installed via URL, not from a local file.
+                        // This branch should not be reached.
+                    }
+                }
+            });
+        }
+
+        Cmd::InstallPluginFromUrl { url } => {
+            spawn_api(rt, model.config.clone(), tx, |e| Msg::PluginInstallFromFileFailed { error: e }, move |client, tx| async move {
+                match client.install_plugin(&url).await {
+                    Ok(plugin) => { let _ = tx.send(Msg::PluginInstalledFromFile { plugin }); }
+                    Err(e) => { let _ = tx.send(Msg::PluginInstallFromFileFailed { error: format!("{e:#}") }); }
+                }
+            });
+        }
+
+        Cmd::ImportComponentFromGitHub { url, component_type } => {
+            let cfg = model.config.clone();
+            rt.spawn(async move {
+                use crate::elm::ComponentsTab;
+                use crate::github::{derive_skill_yaml_path, parse_github_url};
+
+                let (gh_ref, is_dir) = match parse_github_url(&url) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let msg = match component_type {
+                            ComponentsTab::Tools => Msg::ToolCreateFromFileFailed { error: format!("{e:#}") },
+                            _ => Msg::SkillCreateFromFileFailed { error: format!("{e:#}") },
+                        };
+                        let _ = tx.send(msg);
+                        return;
+                    }
+                };
+
+                let http = reqwest::Client::builder()
+                    .build()
+                    .expect("failed to build HTTP client");
+
+                let fetch_raw = |raw_url: String| {
+                    let http = http.clone();
+                    async move {
+                        let resp = http.get(&raw_url).send().await
+                            .map_err(|e| anyhow::anyhow!("fetch failed for {raw_url}: {e}"))?;
+                        let status = resp.status();
+                        if !status.is_success() {
+                            anyhow::bail!("GitHub returned {status} for {raw_url}");
+                        }
+                        resp.text().await
+                            .map_err(|e| anyhow::anyhow!("failed to read body from {raw_url}: {e}"))
+                    }
+                };
+
+                match component_type {
+                    ComponentsTab::Tools => {
+                        if is_dir {
+                            let _ = tx.send(Msg::ToolCreateFromFileFailed {
+                                error: "Tool import expects a file URL (/blob/...), not a folder URL (/tree/...).".to_string(),
+                            });
+                            return;
+                        }
+                        let yaml_contents = match fetch_raw(gh_ref.raw_url_self()).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                let _ = tx.send(Msg::ToolCreateFromFileFailed { error: format!("{e:#}") });
+                                return;
+                            }
+                        };
+                        let req = match crate::agent_builder::parse_tool_yaml(&yaml_contents) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                let _ = tx.send(Msg::ToolCreateFromFileFailed { error: format!("YAML parse error: {e}") });
+                                return;
+                            }
+                        };
+                        if !cfg.is_ready() {
+                            let _ = tx.send(Msg::ToolCreateFromFileFailed { error: "Missing KIBANA_URL and/or API_KEY.".to_string() });
+                            return;
+                        }
+                        let client = match crate::agent_builder::AgentBuilderClient::new(&cfg) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                let _ = tx.send(Msg::ToolCreateFromFileFailed { error: format!("{e:#}") });
+                                return;
+                            }
+                        };
+                        match client.create_tool(&req).await {
+                            Ok(tool) => { let _ = tx.send(Msg::ToolCreatedFromFile { tool }); }
+                            Err(e) => { let _ = tx.send(Msg::ToolCreateFromFileFailed { error: format!("{e:#}") }); }
+                        }
+                    }
+
+                    ComponentsTab::Skills => {
+                        let yaml_ref = if is_dir {
+                            let yaml_path = derive_skill_yaml_path(&gh_ref.path);
+                            crate::github::GitHubFileRef {
+                                owner: gh_ref.owner.clone(),
+                                repo: gh_ref.repo.clone(),
+                                git_ref: gh_ref.git_ref.clone(),
+                                path: yaml_path,
+                            }
+                        } else {
+                            gh_ref
+                        };
+
+                        let yaml_contents = match fetch_raw(yaml_ref.raw_url_self()).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                let _ = tx.send(Msg::SkillCreateFromFileFailed { error: format!("{e:#}") });
+                                return;
+                            }
+                        };
+                        let skill_yaml = match crate::agent_builder::parse_skill_yaml(&yaml_contents) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                let _ = tx.send(Msg::SkillCreateFromFileFailed { error: format!("YAML parse error: {e:#}") });
+                                return;
+                            }
+                        };
+
+                        let content_path = yaml_ref.resolve_relative(&skill_yaml.content);
+                        let content_md = match fetch_raw(yaml_ref.raw_url(&content_path)).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                let _ = tx.send(Msg::SkillCreateFromFileFailed {
+                                    error: format!("Failed to fetch content file '{}': {e:#}", skill_yaml.content),
+                                });
+                                return;
+                            }
+                        };
+
+                        let mut referenced = Vec::new();
+                        for rc in &skill_yaml.referenced_content {
+                            let rc_path = yaml_ref.resolve_relative(&rc.path);
+                            let rc_content = match fetch_raw(yaml_ref.raw_url(&rc_path)).await {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    let _ = tx.send(Msg::SkillCreateFromFileFailed {
+                                        error: format!("Failed to fetch referenced content '{}': {e:#}", rc.path),
+                                    });
+                                    return;
+                                }
+                            };
+                            let filename = std::path::Path::new(&rc.path)
+                                .file_name()
+                                .and_then(|f| f.to_str())
+                                .unwrap_or(&rc.path);
+                            referenced.push(crate::agent_builder::SkillReferencedContent {
+                                name: rc.name.clone(),
+                                relative_path: format!("./{filename}"),
+                                content: rc_content,
+                            });
+                        }
+
+                        let req = crate::agent_builder::CreateSkillRequest {
+                            id: skill_yaml.id,
+                            name: skill_yaml.name,
+                            description: skill_yaml.description,
+                            content: content_md,
+                            referenced_content: referenced,
+                            tool_ids: skill_yaml.tool_ids,
+                        };
+
+                        if !cfg.is_ready() {
+                            let _ = tx.send(Msg::SkillCreateFromFileFailed { error: "Missing KIBANA_URL and/or API_KEY.".to_string() });
+                            return;
+                        }
+                        let client = match crate::agent_builder::AgentBuilderClient::new(&cfg) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                let _ = tx.send(Msg::SkillCreateFromFileFailed { error: format!("{e:#}") });
+                                return;
+                            }
+                        };
+                        match client.create_skill(&req).await {
+                            Ok(skill) => { let _ = tx.send(Msg::SkillCreatedFromFile { skill }); }
+                            Err(e) => { let _ = tx.send(Msg::SkillCreateFromFileFailed { error: format!("{e:#}") }); }
+                        }
+                    }
+
+                    ComponentsTab::Plugins => {
+                        // Plugins use the InstallPluginFromUrl command instead.
                     }
                 }
             });

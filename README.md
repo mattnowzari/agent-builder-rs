@@ -41,6 +41,7 @@ The interface is split into four panels:
 | `e` | Edit selected agent |
 | `d` | Delete selected agent |
 | `i` | Import tool/skill from YAML (in Components panel) |
+| `g` | Import tool/skill from GitHub URL (in Components panel) |
 | `Left` / `Right` | Switch Components tab |
 | `Ctrl+C` | Quit |
 
@@ -97,12 +98,20 @@ If `KIBANA_URL` or `API_KEY` are missing, the TUI will show a modal telling you 
 
 ## Importing Components
 
-Tools and skills can be imported from YAML files directly through the TUI.
+Tools and skills can be imported from local YAML files or directly from GitHub.
 
+**From local file:**
 1. Focus the **Components** panel (`Tab` to cycle)
 2. Switch to the **Tools** or **Skills** tab
 3. Press `i` to open the file explorer
 4. Navigate to the `.yaml` file and press `Enter`
+
+**From GitHub:**
+1. Focus the **Components** panel (`Tab` to cycle)
+2. Switch to the **Tools** or **Skills** tab
+3. Press `g` to open the GitHub import dialog
+4. Paste a GitHub file or folder URL (e.g. `https://github.com/org/repo/blob/main/tools/my-tool.yaml`)
+5. Press `Enter`
 
 ### Tool YAML
 
@@ -160,6 +169,7 @@ src/
 ├── app.rs               # Terminal setup, Tokio runtime, main loop, side-effect execution
 ├── config.rs            # Env-based configuration (.env / shell variables)
 ├── agent_builder.rs     # HTTP client for the Kibana Agent Builder REST API
+├── github.rs            # GitHub URL parser and raw content URL builder
 └── elm/
     ├── mod.rs           # Elm module root
     ├── model.rs         # All application state (Model)

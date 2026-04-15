@@ -27,4 +27,11 @@ pub enum Cmd {
         path: String,
         component_type: ComponentsTab,
     },
+    InstallPluginFromUrl {
+        url: String,
+    },
+    ImportComponentFromGitHub {
+        url: String,
+        component_type: ComponentsTab,
+    },
 }

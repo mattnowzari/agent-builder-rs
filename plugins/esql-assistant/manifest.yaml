@@ -1,0 +1,13 @@
+name: ES|QL Assistant
+version: 1.0.0
+description: "A plugin that helps users write, understand, and optimize ES|QL queries for Elasticsearch"
+author:
+  name: agent-builder-tui contributors
+license: AGPL-3.0
+keywords:
+  - esql
+  - elasticsearch
+  - queries
+  - analytics
+skills:
+  - skills/*/

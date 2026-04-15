@@ -60,6 +60,8 @@ pub enum Msg {
     ToolCreateFromFileFailed { error: String },
     SkillCreatedFromFile { skill: SkillSummary },
     SkillCreateFromFileFailed { error: String },
+    PluginInstalledFromFile { plugin: PluginSummary },
+    PluginInstallFromFileFailed { error: String },
 
     // -- Chat --
     PromptResponseReceived { content: String, conversation_id: Option<String>, model_name: Option<String> },

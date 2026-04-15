@@ -229,6 +229,115 @@ Based on your findings, recommend containment actions...
 
 ---
 
+## Plugin Install
+
+A plugin is a **ZIP archive** that bundles skills and metadata following the [Claude agent plugin specification](https://code.claude.com/docs/en/plugins). Unlike tools and skills, plugins are installed from a **URL** (a GitHub repository or a direct link to a ZIP file) rather than from a local file.
+
+### Prerequisites
+
+Plugin install requires the `agentBuilder:experimentalFeatures` Kibana advanced setting to be enabled. If the setting is disabled, the install endpoint returns `404`.
+
+### Archive Layout
+
+A plugin ZIP contains a manifest and one or more skill directories:
+
+```
+my-plugin/
+├── manifest.yaml          # Plugin metadata (name, version, description, ...)
+├── skills/
+│   ├── my-skill/
+│   │   ├── SKILL.md       # Skill instructions (YAML frontmatter + markdown)
+│   │   └── helper.md      # Optional referenced content
+│   └── another-skill/
+│       └── SKILL.md
+```
+
+The `manifest.yaml` (or `manifest.json`) must include at least a `name` field:
+
+```yaml
+name: My Plugin
+version: 1.0.0
+description: "A plugin that adds analysis skills"
+author:
+  name: Author Name
+  email: author@example.com
+skills:
+  - skills/*/
+```
+
+Each skill directory must contain a `SKILL.md` file. YAML frontmatter in `SKILL.md` provides the skill's `id`, `name`, and `description`. Any sibling files are automatically collected as referenced content.
+
+### How to Install
+
+1. Navigate to the **Components** panel (use `Tab` to cycle panels)
+2. Switch to the **Plugins** tab using `◀` / `▶`
+3. Press `i` to open the install dialog
+4. Enter a GitHub repository URL (e.g. `https://github.com/org/my-plugin`) or a direct ZIP URL
+5. Press `Enter` to install
+
+The Kibana Agent Builder API downloads the archive, parses the manifest, extracts skills, and persists everything. On success, a confirmation modal shows the installed plugin name. All extracted skills appear in the Skills tab and can be assigned to agents.
+
+### Supported URL Formats
+
+- **GitHub repository:** `https://github.com/org/my-agent-plugin` — Kibana fetches the archive from the repository
+- **Direct ZIP URL:** `https://example.com/path/to/plugin.zip` — any publicly accessible ZIP
+
+### What Happens on Install
+
+1. The archive is downloaded from the URL by the Kibana server
+2. The manifest is parsed and validated
+3. Skill directories are scanned for `SKILL.md` files with optional YAML frontmatter
+4. Each skill is persisted individually with a `plugin_id` linking it back to the plugin
+5. The plugin document is created with references to all extracted skill IDs
+
+### Notes
+
+- Plugin IDs are auto-generated UUIDs — you don't specify them
+- Plugin names must be unique across all installed plugins
+- Deleting a plugin also deletes all skills it installed
+- The URL must be accessible from the Kibana server (not from your local machine)
+
+---
+
+## Importing from GitHub
+
+Tools and skills can be imported directly from a public GitHub repository using the `g` keybinding. The TUI fetches files via `raw.githubusercontent.com`, so no GitHub token is needed for public repos.
+
+### How to Import from GitHub
+
+1. Navigate to the **Components** panel (use `Tab` to cycle panels)
+2. Switch to the desired tab (**Tools** or **Skills**) using `◀` / `▶`
+3. Press `g` to open the GitHub import dialog
+4. Paste a GitHub file or folder URL and press `Enter`
+
+> For **Plugins**, pressing `g` opens the same URL install dialog as `i` (Kibana fetches plugin archives server-side).
+
+### Supported URL Formats
+
+| Component | URL Pattern | Example |
+|-----------|-------------|---------|
+| **Tool** | `/blob/` (single file) | `https://github.com/org/repo/blob/main/tools/esql-user-lookup.yaml` |
+| **Skill** | `/blob/` (YAML file) | `https://github.com/org/repo/blob/main/skills/my-skill/my-skill.yaml` |
+| **Skill** | `/tree/` (folder) | `https://github.com/org/repo/tree/main/skills/my-skill` |
+
+### Skill Folder Convention
+
+When you provide a `/tree/` (folder) URL, the TUI derives the YAML filename by convention: it looks for a file named `<folder-name>.yaml` inside the folder. For example:
+
+- URL: `https://github.com/org/repo/tree/main/skills/my-skill`
+- Expected YAML: `skills/my-skill/my-skill.yaml`
+
+The `content` and `referenced_content` paths in the YAML are then resolved relative to that YAML file's location in the repo.
+
+### What Happens on GitHub Import
+
+1. The GitHub URL is parsed to extract `owner`, `repo`, `ref`, and `path`
+2. The YAML file is fetched from `raw.githubusercontent.com`
+3. For skills, the `content` markdown and any `referenced_content` files are fetched from the same repo
+4. The parsed content is sent to the Kibana Agent Builder API via `create_tool` or `create_skill`
+
+---
+
 ## ID Conventions
 
 Both tool and skill IDs follow the same pattern:
