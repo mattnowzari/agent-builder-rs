@@ -114,7 +114,7 @@ where
         let client = match crate::agent_builder::AgentBuilderClient::new(&cfg) {
             Ok(c) => c,
             Err(e) => {
-                let _ = tx.send(on_fail(e.to_string()));
+                let _ = tx.send(on_fail(format!("{e:#}")));
                 return;
             }
         };
@@ -145,7 +145,7 @@ fn execute_cmd(
             spawn_api(rt, model.config.clone(), tx, move |e| Msg::AgentsLoadFailed { error: e, generation }, move |client, tx| async move {
                 match client.list_agents().await {
                     Ok(agents) => { let _ = tx.send(Msg::AgentsLoaded { agents, generation }); }
-                    Err(e) => { let _ = tx.send(Msg::AgentsLoadFailed { error: e.to_string(), generation }); }
+                    Err(e) => { let _ = tx.send(Msg::AgentsLoadFailed { error: format!("{e:#}"), generation }); }
                 }
             });
         }
@@ -154,7 +154,7 @@ fn execute_cmd(
             spawn_api(rt, model.config.clone(), tx, |e| Msg::ConversationsLoadFailed { error: e }, |client, tx| async move {
                 match client.list_conversations().await {
                     Ok(conversations) => { let _ = tx.send(Msg::ConversationsLoaded { conversations }); }
-                    Err(e) => { let _ = tx.send(Msg::ConversationsLoadFailed { error: e.to_string() }); }
+                    Err(e) => { let _ = tx.send(Msg::ConversationsLoadFailed { error: format!("{e:#}") }); }
                 }
             });
         }
@@ -166,9 +166,9 @@ fn execute_cmd(
                 match client.get_conversation(&cid2).await {
                     Ok(detail) => {
                         let messages: Vec<(String, String)> = detail.messages.into_iter().map(|m| (m.role, m.content)).collect();
-                        let _ = tx.send(Msg::ConversationHistoryLoaded { conversation_id: cid2, messages });
+                        let _ = tx.send(Msg::ConversationHistoryLoaded { conversation_id: cid2, messages, model_name: detail.model_name });
                     }
-                    Err(e) => { let _ = tx.send(Msg::ConversationHistoryFailed { conversation_id: cid2, error: e.to_string() }); }
+                    Err(e) => { let _ = tx.send(Msg::ConversationHistoryFailed { conversation_id: cid2, error: format!("{e:#}") }); }
                 }
             });
         }
@@ -177,7 +177,7 @@ fn execute_cmd(
             spawn_api(rt, model.config.clone(), tx, |e| Msg::ToolsLoadFailed { error: e }, |client, tx| async move {
                 match client.list_tools().await {
                     Ok(tools) => { let _ = tx.send(Msg::ToolsLoaded { tools }); }
-                    Err(e) => { let _ = tx.send(Msg::ToolsLoadFailed { error: e.to_string() }); }
+                    Err(e) => { let _ = tx.send(Msg::ToolsLoadFailed { error: format!("{e:#}") }); }
                 }
             });
         }
@@ -186,7 +186,7 @@ fn execute_cmd(
             spawn_api(rt, model.config.clone(), tx, |e| Msg::SkillsLoadFailed { error: e }, |client, tx| async move {
                 match client.list_skills().await {
                     Ok(skills) => { let _ = tx.send(Msg::SkillsLoaded { skills }); }
-                    Err(e) => { let _ = tx.send(Msg::SkillsLoadFailed { error: e.to_string() }); }
+                    Err(e) => { let _ = tx.send(Msg::SkillsLoadFailed { error: format!("{e:#}") }); }
                 }
             });
         }
@@ -195,7 +195,7 @@ fn execute_cmd(
             spawn_api(rt, model.config.clone(), tx, |e| Msg::PluginsLoadFailed { error: e }, |client, tx| async move {
                 match client.list_plugins().await {
                     Ok(plugins) => { let _ = tx.send(Msg::PluginsLoaded { plugins }); }
-                    Err(e) => { let _ = tx.send(Msg::PluginsLoadFailed { error: e.to_string() }); }
+                    Err(e) => { let _ = tx.send(Msg::PluginsLoadFailed { error: format!("{e:#}") }); }
                 }
             });
         }
@@ -231,8 +231,8 @@ fn execute_cmd(
                 .and_then(|s| s.conversation_id.clone());
             spawn_api(rt, model.config.clone(), tx, |e| Msg::PromptResponseFailed { error: e }, move |client, tx| async move {
                 match client.converse(&text, conversation_id.as_deref()).await {
-                    Ok(res) => { let _ = tx.send(Msg::PromptResponseReceived { content: res.message, conversation_id: res.conversation_id }); }
-                    Err(e) => { let _ = tx.send(Msg::PromptResponseFailed { error: e.to_string() }); }
+                    Ok(res) => { let _ = tx.send(Msg::PromptResponseReceived { content: res.message, conversation_id: res.conversation_id, model_name: res.model_name }); }
+                    Err(e) => { let _ = tx.send(Msg::PromptResponseFailed { error: format!("{e:#}") }); }
                 }
             });
         }
@@ -246,6 +246,7 @@ fn execute_cmd(
             tool_ids,
             skill_ids,
             plugin_ids,
+            enable_elastic_capabilities,
         } => {
             spawn_api(rt, model.config.clone(), tx, move |e| Msg::AgentUpsertFailed { error: e }, move |client, tx| async move {
                 let config = crate::agent_builder::AgentConfiguration {
@@ -253,6 +254,7 @@ fn execute_cmd(
                     tools: vec![crate::agent_builder::AgentTools { tool_ids }],
                     skill_ids,
                     plugin_ids,
+                    enable_elastic_capabilities,
                 };
 
                 let res = if is_edit {
@@ -269,7 +271,7 @@ fn execute_cmd(
 
                 match res {
                     Ok(agent) => { let _ = tx.send(Msg::AgentUpserted { agent, is_edit }); }
-                    Err(e) => { let _ = tx.send(Msg::AgentUpsertFailed { error: e.to_string() }); }
+                    Err(e) => { let _ = tx.send(Msg::AgentUpsertFailed { error: format!("{e:#}") }); }
                 }
             });
         }
@@ -302,17 +304,96 @@ fn execute_cmd(
                         let client = match crate::agent_builder::AgentBuilderClient::new(&cfg) {
                             Ok(c) => c,
                             Err(e) => {
-                                let _ = tx.send(Msg::ToolCreateFromFileFailed { error: e.to_string() });
+                                let _ = tx.send(Msg::ToolCreateFromFileFailed { error: format!("{e:#}") });
                                 return;
                             }
                         };
                         match client.create_tool(&req).await {
                             Ok(tool) => { let _ = tx.send(Msg::ToolCreatedFromFile { tool }); }
-                            Err(e) => { let _ = tx.send(Msg::ToolCreateFromFileFailed { error: e.to_string() }); }
+                            Err(e) => { let _ = tx.send(Msg::ToolCreateFromFileFailed { error: format!("{e:#}") }); }
                         }
                     }
                     ComponentsTab::Skills => {
-                        let _ = tx.send(Msg::ToolCreateFromFileFailed { error: "Skill import from YAML is not yet implemented.".to_string() });
+                        let yaml_path = std::path::PathBuf::from(&path);
+                        let parent = match yaml_path.parent() {
+                            Some(p) => p.to_path_buf(),
+                            None => {
+                                let _ = tx.send(Msg::SkillCreateFromFileFailed { error: "Cannot determine parent directory of YAML file.".to_string() });
+                                return;
+                            }
+                        };
+
+                        let contents = match tokio::fs::read_to_string(&path).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                let _ = tx.send(Msg::SkillCreateFromFileFailed { error: format!("Failed to read YAML file: {e}") });
+                                return;
+                            }
+                        };
+                        let skill_yaml = match crate::agent_builder::parse_skill_yaml(&contents) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                let _ = tx.send(Msg::SkillCreateFromFileFailed { error: format!("YAML parse error: {e:#}") });
+                                return;
+                            }
+                        };
+
+                        let content_md = match tokio::fs::read_to_string(parent.join(&skill_yaml.content)).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                let _ = tx.send(Msg::SkillCreateFromFileFailed {
+                                    error: format!("Failed to read content file '{}': {e}", skill_yaml.content),
+                                });
+                                return;
+                            }
+                        };
+
+                        let mut referenced = Vec::new();
+                        for rc in &skill_yaml.referenced_content {
+                            let rc_content = match tokio::fs::read_to_string(parent.join(&rc.path)).await {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    let _ = tx.send(Msg::SkillCreateFromFileFailed {
+                                        error: format!("Failed to read referenced content '{}': {e}", rc.path),
+                                    });
+                                    return;
+                                }
+                            };
+                            let filename = std::path::Path::new(&rc.path)
+                                .file_name()
+                                .and_then(|f| f.to_str())
+                                .unwrap_or(&rc.path);
+                            referenced.push(crate::agent_builder::SkillReferencedContent {
+                                name: rc.name.clone(),
+                                relative_path: format!("./{filename}"),
+                                content: rc_content,
+                            });
+                        }
+
+                        let req = crate::agent_builder::CreateSkillRequest {
+                            id: skill_yaml.id,
+                            name: skill_yaml.name,
+                            description: skill_yaml.description,
+                            content: content_md,
+                            referenced_content: referenced,
+                            tool_ids: skill_yaml.tool_ids,
+                        };
+
+                        if !cfg.is_ready() {
+                            let _ = tx.send(Msg::SkillCreateFromFileFailed { error: "Missing KIBANA_URL and/or API_KEY.".to_string() });
+                            return;
+                        }
+                        let client = match crate::agent_builder::AgentBuilderClient::new(&cfg) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                let _ = tx.send(Msg::SkillCreateFromFileFailed { error: format!("{e:#}") });
+                                return;
+                            }
+                        };
+                        match client.create_skill(&req).await {
+                            Ok(skill) => { let _ = tx.send(Msg::SkillCreatedFromFile { skill }); }
+                            Err(e) => { let _ = tx.send(Msg::SkillCreateFromFileFailed { error: format!("{e:#}") }); }
+                        }
                     }
                     ComponentsTab::Plugins => {
                         let _ = tx.send(Msg::ToolCreateFromFileFailed { error: "Plugin import from YAML is not yet implemented.".to_string() });
@@ -330,7 +411,7 @@ fn execute_cmd(
                 .unwrap_or_else(|| id.clone());
             spawn_api(rt, model.config.clone(), tx, |e| Msg::AgentDeleteFailed { error: e }, move |client, tx| async move {
                 if let Err(e) = client.delete_agent(&id).await {
-                    let _ = tx.send(Msg::AgentDeleteFailed { error: e.to_string() });
+                    let _ = tx.send(Msg::AgentDeleteFailed { error: format!("{e:#}") });
                     return;
                 }
                 let _ = tx.send(Msg::AgentDeleted { name: agent_name });

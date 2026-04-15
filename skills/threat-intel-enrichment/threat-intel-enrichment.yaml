@@ -1,0 +1,10 @@
+id: threat-intel-enrichment
+name: Threat Intel Enrichment
+description: "Enriches security observables (IPs, domains, hashes) with threat intelligence context"
+content: ./threat-intel-enrichment.md
+referenced_content:
+  - name: ioc-patterns
+    path: ./ioc-patterns.md
+  - name: severity-matrix
+    path: ./severity-matrix.md
+tool_ids: []

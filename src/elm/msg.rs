@@ -25,6 +25,7 @@ pub enum Msg {
     ConversationHistoryLoaded {
         conversation_id: String,
         messages: Vec<(String, String)>,
+        model_name: Option<String>,
     },
     ConversationHistoryFailed {
         conversation_id: String,
@@ -57,8 +58,10 @@ pub enum Msg {
     // -- Import from file --
     ToolCreatedFromFile { tool: ToolSummary },
     ToolCreateFromFileFailed { error: String },
+    SkillCreatedFromFile { skill: SkillSummary },
+    SkillCreateFromFileFailed { error: String },
 
     // -- Chat --
-    PromptResponseReceived { content: String, conversation_id: Option<String> },
+    PromptResponseReceived { content: String, conversation_id: Option<String>, model_name: Option<String> },
     PromptResponseFailed { error: String },
 }

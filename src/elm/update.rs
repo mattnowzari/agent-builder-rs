@@ -321,6 +321,26 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             vec![]
         }
 
+        Msg::SkillCreatedFromFile { skill } => {
+            model.modal = Some(Modal::Info {
+                title: "Skill Imported".to_string(),
+                message: format!("Successfully created skill: {} ({})", skill.id, skill.name),
+            });
+            model.components_tools_loading = true;
+            model.components_skills_loading = true;
+            model.components_plugins_loading = true;
+            model.components_generation += 1;
+            vec![Cmd::LoadComponentsData]
+        }
+
+        Msg::SkillCreateFromFileFailed { error } => {
+            model.modal = Some(Modal::Error {
+                title: "Skill Import Failed".to_string(),
+                message: error,
+            });
+            vec![]
+        }
+
         // -- Conversations --
         Msg::ConversationsLoaded { conversations } => {
             model.conversations_loading = false;
@@ -358,6 +378,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                     from_server: true,
                     history_loaded: false,
                     history_loading: false,
+                    model_name: None,
                 });
             }
 
@@ -383,6 +404,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         Msg::ConversationHistoryLoaded {
             conversation_id,
             messages,
+            model_name,
         } => {
             if let Some(session) = model
                 .sessions
@@ -392,6 +414,9 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 session.history_loading = false;
                 session.history_loaded = true;
                 session.chat.clear();
+                if model_name.is_some() {
+                    session.model_name = model_name;
+                }
                 for (role, content) in messages {
                     let chat_role = match role.as_str() {
                         "user" | "human" => ChatRole::User,
@@ -429,10 +454,14 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         Msg::PromptResponseReceived {
             content,
             conversation_id,
+            model_name,
         } => {
             if let Some(session) = model.active_session_mut() {
                 session.waiting_for_response = false;
                 session.conversation_id = conversation_id.or(session.conversation_id.take());
+                if model_name.is_some() {
+                    session.model_name = model_name;
+                }
                 session.push_chat(ChatEntry {
                     role: ChatRole::Assistant,
                     content,
@@ -515,6 +544,7 @@ fn handle_agents_panel_key(
                     from_server: false,
                     history_loaded: true,
                     history_loading: false,
+                    model_name: None,
                 };
                 model.sessions.push(session);
                 let new_idx = model.sessions.len() - 1;
@@ -573,6 +603,7 @@ fn handle_agents_panel_key(
                 selected_tool_ids,
                 selected_skill_ids: agent.skill_ids,
                 selected_plugin_ids: agent.plugin_ids,
+                enable_elastic_capabilities: agent.enable_elastic_capabilities,
                 tools_loading: true,
                 skills_loading: true,
                 plugins_loading: true,
@@ -708,6 +739,10 @@ fn handle_chats_panel_key(
             }
             Some(vec![])
         }
+        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            model.conversations_loading = true;
+            Some(vec![Cmd::LoadConversations])
+        }
         _ => None,
     }
 }
@@ -770,6 +805,13 @@ fn handle_components_panel_key(
                 model.components_tab = TAB_ORDER[pos + 1];
             }
             Some(vec![])
+        }
+        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            model.components_tools_loading = true;
+            model.components_skills_loading = true;
+            model.components_plugins_loading = true;
+            model.components_generation += 1;
+            Some(vec![Cmd::LoadComponentsData])
         }
         KeyCode::Char('i') => {
             let theme = Theme::default()
@@ -974,6 +1016,7 @@ fn update_create_agent_modal(
                 tool_ids: state.selected_tool_ids.clone(),
                 skill_ids: state.selected_skill_ids.clone(),
                 plugin_ids: state.selected_plugin_ids.clone(),
+                enable_elastic_capabilities: state.enable_elastic_capabilities,
             }],
         );
     }
@@ -1093,32 +1136,45 @@ fn update_create_agent_modal(
             state.focus = match state.focus {
                 CreateAgentField::Name => CreateAgentField::Description,
                 CreateAgentField::Description => CreateAgentField::Instructions,
-                CreateAgentField::Instructions => CreateAgentField::Name,
+                CreateAgentField::Instructions => CreateAgentField::ElasticCapabilities,
+                CreateAgentField::ElasticCapabilities => CreateAgentField::Name,
             };
         }
         KeyCode::BackTab => {
             state.focus = match state.focus {
-                CreateAgentField::Name => CreateAgentField::Instructions,
+                CreateAgentField::Name => CreateAgentField::ElasticCapabilities,
                 CreateAgentField::Description => CreateAgentField::Name,
                 CreateAgentField::Instructions => CreateAgentField::Description,
+                CreateAgentField::ElasticCapabilities => CreateAgentField::Instructions,
             };
         }
         KeyCode::Enter => {
             if state.focus == CreateAgentField::Instructions {
                 state.instructions.push('\n');
+            } else if state.focus == CreateAgentField::ElasticCapabilities {
+                state.enable_elastic_capabilities = !state.enable_elastic_capabilities;
             } else {
                 state.focus = match state.focus {
                     CreateAgentField::Name => CreateAgentField::Description,
                     CreateAgentField::Description => CreateAgentField::Instructions,
-                    CreateAgentField::Instructions => CreateAgentField::Name,
+                    CreateAgentField::Instructions => CreateAgentField::ElasticCapabilities,
+                    CreateAgentField::ElasticCapabilities => CreateAgentField::Name,
                 };
             }
         }
+        KeyCode::Char(' ') if state.focus == CreateAgentField::ElasticCapabilities => {
+            state.enable_elastic_capabilities = !state.enable_elastic_capabilities;
+        }
         KeyCode::Backspace => {
-            let field = focused_field_mut(state);
-            field.pop();
+            if state.focus != CreateAgentField::ElasticCapabilities {
+                let field = focused_field_mut(state);
+                field.pop();
+            }
         }
         KeyCode::Char(c) => {
+            if state.focus == CreateAgentField::ElasticCapabilities {
+                return (false, vec![]);
+            }
             if key.modifiers.contains(KeyModifiers::CONTROL)
                 || key.modifiers.contains(KeyModifiers::ALT)
             {
@@ -1137,7 +1193,9 @@ fn focused_field_mut(state: &mut CreateAgentModal) -> &mut String {
     match state.focus {
         CreateAgentField::Name => &mut state.name,
         CreateAgentField::Description => &mut state.description,
-        CreateAgentField::Instructions => &mut state.instructions,
+        CreateAgentField::Instructions | CreateAgentField::ElasticCapabilities => {
+            &mut state.instructions
+        }
     }
 }
 

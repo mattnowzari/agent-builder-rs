@@ -20,6 +20,7 @@ pub enum Cmd {
         tool_ids: Vec<String>,
         skill_ids: Vec<String>,
         plugin_ids: Vec<String>,
+        enable_elastic_capabilities: bool,
     },
     DeleteAgent { id: String },
     ImportComponentFromFile {

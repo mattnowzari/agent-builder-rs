@@ -23,6 +23,8 @@ pub struct ConversationMessage {
 #[derive(Debug, Clone)]
 pub struct ConversationDetail {
     pub messages: Vec<ConversationMessage>,
+    /// LLM model name extracted from the most recent round's `model_usage`.
+    pub model_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -34,6 +36,7 @@ pub struct AgentSummary {
     pub tool_ids: Vec<String>,
     pub skill_ids: Vec<String>,
     pub plugin_ids: Vec<String>,
+    pub enable_elastic_capabilities: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -86,6 +89,8 @@ pub struct AgentBuilderClient {
     http: reqwest::Client,
 }
 
+const API_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 impl AgentBuilderClient {
     pub fn new(cfg: &Config) -> Result<Self> {
         let base_url = normalize_base_url(
@@ -111,7 +116,6 @@ impl AgentBuilderClient {
 
         let http = reqwest::Client::builder()
             .default_headers(headers)
-            .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(10))
             .danger_accept_invalid_certs(cfg.insecure_tls)
             .danger_accept_invalid_hostnames(cfg.insecure_tls)
@@ -143,28 +147,57 @@ impl AgentBuilderClient {
             input,
             agent_id: &self.agent_id,
             conversation_id,
+            capabilities: ConverseCapabilities { visualizations: true },
+            attachments: vec![ConverseAttachment {
+                attachment_type: "screen_context",
+                data: ScreenContextData {
+                    url: format!(
+                        "{}/app/management/insightsAndAlerting/triggersActionsConnectors",
+                        self.base_url
+                    ),
+                    app: "management",
+                },
+                hidden: true,
+            }],
         };
 
         let resp = self
             .http
             .post(url)
+            .timeout(std::time::Duration::from_secs(300))
             .json(&body)
             .send()
             .await
-            .context("failed to send request")?;
+            .context("failed to send converse request (agent may still be processing)")?;
 
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         if !status.is_success() {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(msg) = v.pointer("/response/message").and_then(|m| m.as_str()) {
+                    return Ok(ConverseResult {
+                        conversation_id: v.get("conversation_id").and_then(|c| c.as_str()).map(String::from),
+                        message: msg.to_string(),
+                        model_name: extract_model_name(&v),
+                    });
+                }
+            }
             anyhow::bail!("Agent Builder API error {status}: {text}");
         }
 
-        let parsed: ConverseResponse =
+        let v: serde_json::Value =
             serde_json::from_str(&text).context("failed to parse Agent Builder response JSON")?;
 
+        let message = v
+            .pointer("/response/message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("")
+            .to_string();
+
         Ok(ConverseResult {
-            conversation_id: parsed.conversation_id,
-            message: parsed.response.message,
+            conversation_id: v.get("conversation_id").and_then(|c| c.as_str()).map(String::from),
+            message,
+            model_name: extract_model_name(&v),
         })
     }
 
@@ -173,6 +206,7 @@ impl AgentBuilderClient {
         let resp = self
             .http
             .get(url)
+            .timeout(API_TIMEOUT)
             .send()
             .await
             .context("failed to send request")?;
@@ -193,6 +227,7 @@ impl AgentBuilderClient {
         let resp = self
             .http
             .get(url)
+            .timeout(API_TIMEOUT)
             .send()
             .await
             .context("failed to send request")?;
@@ -218,15 +253,17 @@ impl AgentBuilderClient {
             .unwrap_or_default();
         let sent_skill_ids = req.configuration.skill_ids.clone();
         let sent_plugin_ids = req.configuration.plugin_ids.clone();
+        let sent_elastic_caps = req.configuration.enable_elastic_capabilities;
 
         let url = self.api_url("agents");
         let resp = self
             .http
             .post(url)
+            .timeout(API_TIMEOUT)
             .json(&req)
             .send()
             .await
-            .context("failed to send request")?;
+            .context("failed to send create agent request")?;
 
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
@@ -245,6 +282,7 @@ impl AgentBuilderClient {
             tool_ids: sent_tool_ids,
             skill_ids: sent_skill_ids,
             plugin_ids: sent_plugin_ids,
+            enable_elastic_capabilities: sent_elastic_caps,
         })
     }
 
@@ -258,15 +296,17 @@ impl AgentBuilderClient {
             .unwrap_or_default();
         let sent_skill_ids = req.configuration.skill_ids.clone();
         let sent_plugin_ids = req.configuration.plugin_ids.clone();
+        let sent_elastic_caps = req.configuration.enable_elastic_capabilities;
 
         let url = self.api_url(&format!("agents/{id}"));
         let resp = self
             .http
             .put(url)
+            .timeout(API_TIMEOUT)
             .json(&req)
             .send()
             .await
-            .context("failed to send request")?;
+            .context("failed to send update agent request")?;
 
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
@@ -285,6 +325,7 @@ impl AgentBuilderClient {
             tool_ids: sent_tool_ids,
             skill_ids: sent_skill_ids,
             plugin_ids: sent_plugin_ids,
+            enable_elastic_capabilities: sent_elastic_caps,
         })
     }
 
@@ -293,9 +334,10 @@ impl AgentBuilderClient {
         let resp = self
             .http
             .get(url)
+            .timeout(API_TIMEOUT)
             .send()
             .await
-            .context("failed to send request")?;
+            .context("failed to send list skills request")?;
 
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
@@ -313,9 +355,10 @@ impl AgentBuilderClient {
         let resp = self
             .http
             .get(url)
+            .timeout(API_TIMEOUT)
             .send()
             .await
-            .context("failed to send request")?;
+            .context("failed to send list plugins request")?;
 
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
@@ -333,9 +376,10 @@ impl AgentBuilderClient {
         let resp = self
             .http
             .get(url)
+            .timeout(API_TIMEOUT)
             .send()
             .await
-            .context("failed to send request")?;
+            .context("failed to send list conversations request")?;
 
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
@@ -353,9 +397,10 @@ impl AgentBuilderClient {
         let resp = self
             .http
             .get(url)
+            .timeout(API_TIMEOUT)
             .send()
             .await
-            .context("failed to send request")?;
+            .context("failed to send get conversation request")?;
 
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
@@ -373,6 +418,7 @@ impl AgentBuilderClient {
         let resp = self
             .http
             .post(url)
+            .timeout(API_TIMEOUT)
             .json(req)
             .send()
             .await
@@ -389,14 +435,37 @@ impl AgentBuilderClient {
         Ok(tool)
     }
 
+    pub async fn create_skill(&self, req: &CreateSkillRequest) -> Result<SkillSummary> {
+        let url = self.api_url("skills");
+        let resp = self
+            .http
+            .post(url)
+            .timeout(API_TIMEOUT)
+            .json(req)
+            .send()
+            .await
+            .context("failed to send create skill request")?;
+
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("Agent Builder API error {status}: {text}");
+        }
+
+        let skill: SkillSummary =
+            serde_json::from_str(&text).context("failed to parse create skill response")?;
+        Ok(skill)
+    }
+
     pub async fn delete_agent(&self, id: &str) -> Result<()> {
         let url = self.api_url(&format!("agents/{id}"));
         let resp = self
             .http
             .delete(url)
+            .timeout(API_TIMEOUT)
             .send()
             .await
-            .context("failed to send request")?;
+            .context("failed to send delete agent request")?;
 
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
@@ -504,6 +573,11 @@ fn parse_agents(v: serde_json::Value) -> Result<Vec<AgentSummary>> {
             })
             .unwrap_or_default();
 
+        let enable_elastic_capabilities = config
+            .and_then(|v| v.get("enable_elastic_capabilities"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         out.push(AgentSummary {
             id,
             name,
@@ -512,6 +586,7 @@ fn parse_agents(v: serde_json::Value) -> Result<Vec<AgentSummary>> {
             tool_ids,
             skill_ids,
             plugin_ids,
+            enable_elastic_capabilities,
         });
     }
 
@@ -712,10 +787,50 @@ fn parse_conversation_detail(v: serde_json::Value) -> Result<ConversationDetail>
         });
     }
 
-    Ok(ConversationDetail { messages })
+    let model_name = extract_model_from_rounds(obj);
+
+    Ok(ConversationDetail { messages, model_name })
+}
+
+/// Extract `model_usage.model` from the sync converse response (top-level `model_usage`).
+fn extract_model_name(v: &serde_json::Value) -> Option<String> {
+    v.get("model_usage")
+        .and_then(|mu| mu.get("model"))
+        .and_then(|m| m.as_str())
+        .map(String::from)
+}
+
+/// Extract model name from the last round's `model_usage` in a conversation detail.
+fn extract_model_from_rounds(obj: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    obj.get("rounds")
+        .and_then(|v| v.as_array())
+        .and_then(|rounds| rounds.last())
+        .and_then(|round| round.get("model_usage"))
+        .and_then(|mu| mu.get("model"))
+        .and_then(|m| m.as_str())
+        .map(String::from)
 }
 
 // --- Request / Response types ---
+
+#[derive(Debug, Serialize)]
+struct ConverseCapabilities {
+    visualizations: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ConverseAttachment {
+    #[serde(rename = "type")]
+    attachment_type: &'static str,
+    data: ScreenContextData,
+    hidden: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ScreenContextData {
+    url: String,
+    app: &'static str,
+}
 
 #[derive(Debug, Serialize)]
 struct ConverseRequest<'a> {
@@ -724,23 +839,15 @@ struct ConverseRequest<'a> {
     agent_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     conversation_id: Option<&'a str>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ConverseResponse {
-    response: ConverseResponseMessage,
-    conversation_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ConverseResponseMessage {
-    message: String,
+    capabilities: ConverseCapabilities,
+    attachments: Vec<ConverseAttachment>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ConverseResult {
     pub conversation_id: Option<String>,
     pub message: String,
+    pub model_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -797,6 +904,7 @@ pub struct AgentConfiguration {
     pub skill_ids: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub plugin_ids: Vec<String>,
+    pub enable_elastic_capabilities: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -992,4 +1100,52 @@ fn build_workflow_config(yaml: &ToolYaml) -> Result<serde_json::Value> {
         "workflow_id": workflow_id,
         "wait_for_completion": wait,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// YAML skill loading
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct SkillYaml {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    /// Relative path to the main markdown file (resolved from the YAML file's parent dir).
+    pub content: String,
+    #[serde(default)]
+    pub referenced_content: Vec<SkillRefYaml>,
+    #[serde(default)]
+    pub tool_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SkillRefYaml {
+    pub name: String,
+    /// Relative path to a supplementary markdown file.
+    pub path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateSkillRequest {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub content: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub referenced_content: Vec<SkillReferencedContent>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tool_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillReferencedContent {
+    pub name: String,
+    pub relative_path: String,
+    pub content: String,
+}
+
+pub fn parse_skill_yaml(contents: &str) -> Result<SkillYaml> {
+    serde_yaml::from_str(contents).context("failed to parse YAML skill definition")
 }

@@ -12,9 +12,9 @@ use super::model::{
     CreateAgentTab, ImportModal, Modal, Model,
 };
 
-const BORDER_NORMAL: Color = Color::DarkGray;
+const BORDER_NORMAL: Color = Color::Gray;
 const BORDER_FOCUSED: Color = Color::Cyan;
-const SUBTLE: Color = Color::DarkGray;
+const SUBTLE: Color = Color::Gray;
 
 fn panel_style(active: ActivePanel, this: ActivePanel) -> Style {
     if active == this {
@@ -57,7 +57,7 @@ pub fn view(frame: &mut Frame, model: &mut Model) {
 fn render_agents_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
     let style = panel_style(model.active, ActivePanel::Agents);
 
-    let title = " Agents [↑↓] [Enter chat] [n new] [e edit] [d del] ";
+    let title = " Agents [↑↓] [Enter chat] [n new] [e edit] [d del] [Ctrl+R refresh] ";
 
     let agents_block = Block::default()
         .title(title)
@@ -115,7 +115,7 @@ fn render_agents_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
     let list = List::new(items)
         .highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
+                .bg(Color::Rgb(60, 60, 60))
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▶ ");
@@ -179,14 +179,14 @@ fn render_chats_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
     let is_filtered = !model.agents.is_empty();
 
     let title = if model.conversations_loading {
-        " Chats (loading...) [↑↓] [Enter] [x close] ".to_string()
+        " Chats (loading...) [↑↓] [Enter] [x close] [Ctrl+R refresh] ".to_string()
     } else if is_filtered {
         format!(
-            " Chats ({}) [↑↓] [Enter] [x close] ",
+            " Chats ({}) [↑↓] [Enter] [x close] [Ctrl+R refresh] ",
             filtered.len()
         )
     } else {
-        format!(" Chats ({}) [↑↓] [Enter] [x close] ", model.sessions.len())
+        format!(" Chats ({}) [↑↓] [Enter] [x close] [Ctrl+R refresh] ", model.sessions.len())
     };
 
     let chats_block = Block::default()
@@ -252,7 +252,7 @@ fn render_chats_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
     let list = List::new(items)
         .highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
+                .bg(Color::Rgb(60, 60, 60))
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▶ ");
@@ -412,7 +412,9 @@ fn render_chat_input(frame: &mut Frame, model: &Model, style: Style, is_focused:
 
     let waiting = session.is_some_and(|s| s.waiting_for_response);
     let agent_label = session.map(|s| s.agent_name.as_str()).unwrap_or("none");
-    let model_label = "Agent Builder";
+    let model_label = session
+        .and_then(|s| s.model_name.as_deref())
+        .unwrap_or("model unknown");
 
     let title = if waiting {
         format!(" Waiting... | {agent_label} | {model_label} ")
@@ -582,7 +584,7 @@ fn render_components_panel(frame: &mut Frame, model: &Model, area: Rect) {
     let style = panel_style(model.active, ActivePanel::Components);
 
     let outer_block = Block::default()
-        .title(" Components [◀-▶ switch tab] [i import] ")
+        .title(" Components [◀-▶ switch tab] [i import] [Ctrl+R refresh] ")
         .borders(Borders::ALL)
         .border_style(style);
 
@@ -990,6 +992,7 @@ fn render_prompt_tab(frame: &mut Frame, state: &CreateAgentModal, area: Rect) {
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Min(3),
+            Constraint::Length(3),
         ])
         .split(area);
 
@@ -1051,6 +1054,24 @@ fn render_prompt_tab(frame: &mut Frame, state: &CreateAgentModal, area: Rect) {
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(instr_widget, fields[2]);
+
+    let ec_style = if state.focus == CreateAgentField::ElasticCapabilities {
+        focus_style
+    } else {
+        normal_style
+    };
+    let toggle = if state.enable_elastic_capabilities {
+        "[x] Enabled"
+    } else {
+        "[ ] Disabled"
+    };
+    let ec_widget = Paragraph::new(format!("  {toggle}  (Space/Enter to toggle)")).block(
+        Block::default()
+            .title(" Elastic Capabilities ")
+            .borders(Borders::ALL)
+            .border_style(ec_style),
+    );
+    frame.render_widget(ec_widget, fields[3]);
 }
 
 fn render_tools_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect) {
@@ -1096,7 +1117,7 @@ fn render_tools_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect)
     let list = List::new(items)
         .highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
+                .bg(Color::Rgb(60, 60, 60))
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▶ ");
@@ -1153,7 +1174,7 @@ fn render_skills_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect
     let list = List::new(items)
         .highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
+                .bg(Color::Rgb(60, 60, 60))
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▶ ");
@@ -1214,7 +1235,7 @@ fn render_plugins_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rec
     let list = List::new(items)
         .highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
+                .bg(Color::Rgb(60, 60, 60))
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▶ ");

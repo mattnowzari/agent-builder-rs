@@ -1,0 +1,8 @@
+id: dashboard-builder
+name: Dashboard Builder
+description: "Helps users design and build Kibana dashboards from natural language descriptions"
+content: ./dashboard-builder.md
+referenced_content:
+  - name: visualization-guide
+    path: ./visualization-guide.md
+tool_ids: []

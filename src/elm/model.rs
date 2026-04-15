@@ -58,6 +58,8 @@ pub struct ChatSession {
     pub history_loaded: bool,
     /// True while conversation history is being fetched.
     pub history_loading: bool,
+    /// LLM model name, populated from converse or conversation history responses.
+    pub model_name: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -209,6 +211,7 @@ pub enum CreateAgentField {
     Name,
     Description,
     Instructions,
+    ElasticCapabilities,
 }
 
 #[derive(Debug, Clone)]
@@ -240,6 +243,8 @@ pub struct CreateAgentModal {
     pub plugins_selected_index: usize,
     pub plugins_list_state: ListState,
     pub selected_plugin_ids: Vec<String>,
+
+    pub enable_elastic_capabilities: bool,
 
     pub submitting: bool,
     pub error: Option<String>,
@@ -278,6 +283,7 @@ impl Default for CreateAgentModal {
             plugins_selected_index: 0,
             plugins_list_state: ListState::default(),
             selected_plugin_ids: Vec::new(),
+            enable_elastic_capabilities: true,
             submitting: false,
             error: None,
         }

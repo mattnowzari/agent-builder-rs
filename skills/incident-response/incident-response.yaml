@@ -1,0 +1,9 @@
+id: incident-response
+name: Incident Response
+description: "Guides the agent through structured incident response procedures for security events"
+content: ./incident-response.md
+referenced_content:
+  - name: runbook
+    path: ./runbook.md
+tool_ids:
+  - esql-user-lookup
