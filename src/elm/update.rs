@@ -222,6 +222,8 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             model.components_tools = tools;
             model.components_skills = skills;
             model.components_plugins = plugins;
+            model.components_selected_index = 0;
+            sync_components_list_state(model);
             vec![]
         }
 
@@ -887,6 +889,30 @@ fn activate_session_agent(model: &mut Model) {
 }
 
 // ---------------------------------------------------------------------------
+// Components panel helpers
+// ---------------------------------------------------------------------------
+
+fn components_list_len(model: &Model) -> usize {
+    match model.components_tab {
+        ComponentsTab::Plugins => model.components_plugins.len(),
+        ComponentsTab::Skills => model.components_skills.len(),
+        ComponentsTab::Tools => model.components_tools.len(),
+    }
+}
+
+fn sync_components_list_state(model: &mut Model) {
+    let len = components_list_len(model);
+    if len == 0 {
+        model.components_list_state.select(None);
+    } else {
+        model.components_selected_index = model.components_selected_index.min(len - 1);
+        model
+            .components_list_state
+            .select(Some(model.components_selected_index));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Components panel key handling
 // ---------------------------------------------------------------------------
 
@@ -906,6 +932,8 @@ fn handle_components_panel_key(
                 && pos > 0
             {
                 model.components_tab = TAB_ORDER[pos - 1];
+                model.components_selected_index = 0;
+                sync_components_list_state(model);
             }
             Some(vec![])
         }
@@ -914,6 +942,26 @@ fn handle_components_panel_key(
                 && pos + 1 < TAB_ORDER.len()
             {
                 model.components_tab = TAB_ORDER[pos + 1];
+                model.components_selected_index = 0;
+                sync_components_list_state(model);
+            }
+            Some(vec![])
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            let len = components_list_len(model);
+            if len > 0 {
+                model.components_selected_index =
+                    model.components_selected_index.saturating_sub(1);
+                sync_components_list_state(model);
+            }
+            Some(vec![])
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let len = components_list_len(model);
+            if len > 0 {
+                model.components_selected_index =
+                    (model.components_selected_index + 1).min(len - 1);
+                sync_components_list_state(model);
             }
             Some(vec![])
         }

@@ -405,8 +405,10 @@ fn execute_cmd(
         }
 
         Cmd::InstallPluginFromUrl { url } => {
+            let download_url = crate::github::github_url_to_download_zip(&url)
+                .unwrap_or(url);
             spawn_api(rt, model.config.clone(), tx, |e| Msg::PluginInstallFromFileFailed { error: e }, move |client, tx| async move {
-                match client.install_plugin(&url).await {
+                match client.install_plugin(&download_url).await {
                     Ok(plugin) => { let _ = tx.send(Msg::PluginInstalledFromFile { plugin }); }
                     Err(e) => { let _ = tx.send(Msg::PluginInstallFromFileFailed { error: format!("{e:#}") }); }
                 }

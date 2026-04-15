@@ -101,6 +101,8 @@ pub struct Model {
     pub components_plugins: Vec<PluginSummary>,
     pub components_plugins_loading: bool,
     pub components_plugins_error: Option<String>,
+    pub components_selected_index: usize,
+    pub components_list_state: ListState,
     /// Monotonic counter incremented each time a components load is requested.
     pub components_generation: u64,
 

@@ -255,9 +255,33 @@ fn render_chats_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
         )
         .highlight_symbol("▶ ");
 
+    let content_area = Rect {
+        width: inner.width.saturating_sub(1),
+        ..inner
+    };
     let mut list_state = ListState::default();
     list_state.select(highlight_within_filtered);
-    frame.render_stateful_widget(list, inner, &mut list_state);
+    frame.render_stateful_widget(list, content_area, &mut list_state);
+
+    let total = filtered.len();
+    let viewport = inner.height as usize;
+    if total > viewport {
+        let scrollbar_area = Rect {
+            x: inner.x + inner.width.saturating_sub(1),
+            width: 1,
+            ..inner
+        };
+        let position = highlight_within_filtered.unwrap_or(0);
+        let mut scrollbar_state = ScrollbarState::default()
+            .content_length(total)
+            .viewport_content_length(viewport)
+            .position(position);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight),
+            scrollbar_area,
+            &mut scrollbar_state,
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -594,7 +618,7 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 // Components panel
 // ---------------------------------------------------------------------------
 
-fn render_components_panel(frame: &mut Frame, model: &Model, area: Rect) {
+fn render_components_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
     let style = panel_style(model.active, ActivePanel::Components);
 
     let outer_block = Block::default()
@@ -635,11 +659,9 @@ fn render_components_panel(frame: &mut Frame, model: &Model, area: Rect) {
     );
     frame.render_widget(tabs, tabs_area);
 
-    match model.components_tab {
-        ComponentsTab::Plugins => {
-            render_components_list(
-                frame,
-                content_area,
+    let (loading, error, label, items): (bool, Option<&str>, &str, Vec<(String, String, bool)>) =
+        match model.components_tab {
+            ComponentsTab::Plugins => (
                 model.components_plugins_loading,
                 model.components_plugins_error.as_deref(),
                 "plugins",
@@ -664,12 +686,8 @@ fn render_components_panel(frame: &mut Frame, model: &Model, area: Rect) {
                         )
                     })
                     .collect(),
-            );
-        }
-        ComponentsTab::Skills => {
-            render_components_list(
-                frame,
-                content_area,
+            ),
+            ComponentsTab::Skills => (
                 model.components_skills_loading,
                 model.components_skills_error.as_deref(),
                 "skills",
@@ -689,12 +707,8 @@ fn render_components_panel(frame: &mut Frame, model: &Model, area: Rect) {
                         )
                     })
                     .collect(),
-            );
-        }
-        ComponentsTab::Tools => {
-            render_components_list(
-                frame,
-                content_area,
+            ),
+            ComponentsTab::Tools => (
                 model.components_tools_loading,
                 model.components_tools_error.as_deref(),
                 "tools",
@@ -703,9 +717,19 @@ fn render_components_panel(frame: &mut Frame, model: &Model, area: Rect) {
                     .iter()
                     .map(|t| (t.id.clone(), t.description.clone(), t.readonly))
                     .collect(),
-            );
-        }
-    }
+            ),
+        };
+
+    render_components_list(
+        frame,
+        content_area,
+        loading,
+        error,
+        label,
+        items,
+        &mut model.components_list_state,
+        model.components_selected_index,
+    );
 }
 
 fn render_components_list(
@@ -715,6 +739,8 @@ fn render_components_list(
     error: Option<&str>,
     label: &str,
     items: Vec<(String, String, bool)>,
+    list_state: &mut ListState,
+    selected_index: usize,
 ) {
     if loading {
         let msg = Paragraph::new(format!("Loading {label}..."))
@@ -753,7 +779,14 @@ fn render_components_list(
         .collect();
 
     let count = list_items.len();
-    let list = List::new(list_items);
+    let list = List::new(list_items)
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(60, 60, 60))
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
     let title_line = Line::from(Span::styled(
         format!(" {count} {label} "),
         Style::default().fg(SUBTLE),
@@ -761,7 +794,7 @@ fn render_components_list(
     let header = Paragraph::new(title_line);
 
     if area.height < 2 {
-        frame.render_widget(list, area);
+        frame.render_stateful_widget(list, area, list_state);
         return;
     }
 
@@ -771,7 +804,32 @@ fn render_components_list(
         .split(area);
 
     frame.render_widget(header, split[0]);
-    frame.render_widget(list, split[1]);
+
+    let list_area = split[1];
+    let content_area = Rect {
+        width: list_area.width.saturating_sub(1),
+        ..list_area
+    };
+    frame.render_stateful_widget(list, content_area, list_state);
+
+    let total = count;
+    let viewport = list_area.height as usize;
+    if total > viewport {
+        let scrollbar_area = Rect {
+            x: list_area.x + list_area.width.saturating_sub(1),
+            width: 1,
+            ..list_area
+        };
+        let mut scrollbar_state = ScrollbarState::default()
+            .content_length(total)
+            .viewport_content_length(viewport)
+            .position(selected_index);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight),
+            scrollbar_area,
+            &mut scrollbar_state,
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

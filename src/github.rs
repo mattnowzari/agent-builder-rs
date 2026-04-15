@@ -88,6 +88,53 @@ pub fn derive_skill_yaml_path(dir_path: &str) -> String {
     format!("{}/{}.yaml", dir_path.trim_end_matches('/'), dir_name)
 }
 
+/// Convert a GitHub page URL to a downloadable ZIP URL suitable for
+/// Kibana's plugin install endpoint. Returns `None` if the URL is not a
+/// recognised GitHub page URL (in which case the caller should pass it
+/// through unchanged, assuming it is already a direct download link).
+///
+/// Behaviour:
+/// - `/blob/{ref}/{path}` pointing to a `.zip` file → raw download URL for that file
+/// - `/tree/{ref}/{path}` (directory) → repo archive download at that ref
+/// - `/{owner}/{repo}` (bare repo) → repo archive download assuming `main`
+pub fn github_url_to_download_zip(url: &str) -> Option<String> {
+    let url = url.trim();
+    let stripped = url
+        .strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("http://github.com/"))?;
+
+    let segments: Vec<&str> = stripped.splitn(5, '/').collect();
+    if segments.len() < 2 {
+        return None;
+    }
+
+    let owner = segments[0];
+    let repo = segments[1].trim_end_matches(".git");
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+
+    if segments.len() >= 5 {
+        let kind = segments[2];
+        let git_ref = segments[3];
+        let path = segments[4];
+
+        if kind == "blob" && path.ends_with(".zip") {
+            return Some(format!(
+                "https://raw.githubusercontent.com/{owner}/{repo}/{git_ref}/{path}"
+            ));
+        }
+
+        return Some(format!(
+            "https://github.com/{owner}/{repo}/archive/{git_ref}.zip"
+        ));
+    }
+
+    Some(format!(
+        "https://github.com/{owner}/{repo}/archive/main.zip"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +172,50 @@ mod tests {
         assert_eq!(
             derive_skill_yaml_path("skills/my-skill"),
             "skills/my-skill/my-skill.yaml"
+        );
+    }
+
+    #[test]
+    fn download_zip_from_blob_zip_file() {
+        assert_eq!(
+            github_url_to_download_zip(
+                "https://github.com/mattnowzari/agent-builder-definitions/blob/main/plugins/esql-assistant.zip"
+            ),
+            Some("https://raw.githubusercontent.com/mattnowzari/agent-builder-definitions/main/plugins/esql-assistant.zip".to_string()),
+        );
+    }
+
+    #[test]
+    fn download_zip_from_tree_url() {
+        assert_eq!(
+            github_url_to_download_zip("https://github.com/org/repo/tree/main/plugins/my-plugin"),
+            Some("https://github.com/org/repo/archive/main.zip".to_string()),
+        );
+    }
+
+    #[test]
+    fn download_zip_from_bare_repo() {
+        assert_eq!(
+            github_url_to_download_zip("https://github.com/org/repo"),
+            Some("https://github.com/org/repo/archive/main.zip".to_string()),
+        );
+    }
+
+    #[test]
+    fn download_zip_non_github_returns_none() {
+        assert_eq!(
+            github_url_to_download_zip("https://example.com/plugin.zip"),
+            None,
+        );
+    }
+
+    #[test]
+    fn download_zip_blob_non_zip_uses_archive() {
+        assert_eq!(
+            github_url_to_download_zip(
+                "https://github.com/org/repo/blob/main/plugins/readme.md"
+            ),
+            Some("https://github.com/org/repo/archive/main.zip".to_string()),
         );
     }
 
