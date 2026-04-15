@@ -1,6 +1,6 @@
-# Importing Components
+# Importing Components and Agents
 
-The TUI supports importing custom tools and skills from local YAML files or directly from a GitHub repository, and installing plugins from a URL. This document covers the YAML format for each component type, expected folder layout, and how to perform imports.
+The TUI supports importing custom tools, skills, and agents from local YAML files or directly from a GitHub repository, and installing plugins from a URL. This document covers the YAML format for each type, expected folder layout, and how to perform imports.
 
 ## How to Import (Local File)
 
@@ -381,6 +381,111 @@ Same as above, but uses the explicit `/blob/` URL and a tag (`v2.0`) instead of 
 - **Branch, tag, or commit** — the `ref` segment in the URL can be a branch name (`main`), a tag (`v1.0`), or a full commit SHA.
 - **Tool URLs must use `/blob/`** — tools are single files, so folder (`/tree/`) URLs are not accepted for tool imports.
 - **Same YAML format** — the YAML schema is identical whether you import from a local file or from GitHub. See the [Tool Import](#tool-import) and [Skill Import](#skill-import) sections above for the full schema reference.
+
+---
+
+## Agent Import
+
+An agent is defined as a **folder** containing a YAML definition file and a markdown instructions file, following the same pattern as skills.
+
+### Folder Layout
+
+```
+agents/
+  my-security-agent/
+    my-security-agent.yaml   # Agent definition (select this when importing)
+    my-security-agent.md     # Custom instructions (markdown)
+```
+
+### YAML Schema
+
+The YAML maps directly to the Kibana Agent Builder [Create Agent API](https://www.elastic.co/docs/solutions/security/ai/ai-assistant-agent-builder):
+
+```yaml
+id: my-security-agent
+name: Security Analyst
+description: "An agent specialized in security event analysis"
+instructions: ./my-security-agent.md
+tool_ids:
+  - esql-user-lookup
+  - index-search-security-logs
+skill_ids:
+  - incident-response
+plugin_ids: []
+enable_elastic_capabilities: true
+# Optional cosmetic fields
+avatar_color: "#FF5733"
+avatar_symbol: SA
+labels:
+  - security
+```
+
+| Field                        | Type     | Required | Description                                                    |
+|------------------------------|----------|----------|----------------------------------------------------------------|
+| `id`                         | string   | Yes      | Unique identifier for the agent                                |
+| `name`                       | string   | Yes      | Display name                                                   |
+| `description`                | string   | Yes      | Description of the agent's purpose                             |
+| `instructions`               | string   | Yes      | Relative path to a markdown file with system instructions      |
+| `tool_ids`                   | string[] | No       | Tool IDs this agent can use (defaults to `[]`)                 |
+| `skill_ids`                  | string[] | No       | Skill IDs assigned to this agent (defaults to `[]`)            |
+| `plugin_ids`                 | string[] | No       | Plugin IDs assigned to this agent (defaults to `[]`)           |
+| `enable_elastic_capabilities`| boolean  | No       | Enable built-in Elastic capabilities (defaults to `true`)      |
+| `avatar_color`               | string   | No       | Hex color code for the agent avatar (e.g. `"#FF5733"`)        |
+| `avatar_symbol`              | string   | No       | Symbol or initials for the agent avatar                        |
+| `labels`                     | string[] | No       | Labels for categorization (defaults to `[]`)                   |
+
+### How to Import (Local File)
+
+1. Navigate to the **Agents** panel (use `Tab` to cycle panels)
+2. Press `i` to open the file explorer
+3. Navigate to the `.yaml` or `.yml` file and press `Enter`
+4. The TUI reads the YAML, fetches the instructions markdown, creates the agent via the API, and reloads the agents list
+
+### How to Import (GitHub)
+
+1. Navigate to the **Agents** panel (use `Tab` to cycle panels)
+2. Press `g` to open the GitHub import dialog
+3. Paste a GitHub URL:
+   - **Folder:** `https://github.com/org/repo/tree/main/agents/my-agent` (YAML path derived by convention)
+   - **File:** `https://github.com/org/repo/blob/main/agents/my-agent/my-agent.yaml`
+4. Press `Enter`
+
+The same folder convention applies as skills: for `/tree/` URLs, the TUI expects `<folder>/<folder>.yaml`.
+
+### Full Example
+
+**`agents/my-security-agent/my-security-agent.yaml`:**
+
+```yaml
+id: my-security-agent
+name: Security Analyst
+description: "Analyzes security events and provides threat insights"
+instructions: ./my-security-agent.md
+tool_ids:
+  - esql-user-lookup
+  - index-search-security-logs
+skill_ids:
+  - incident-response
+enable_elastic_capabilities: true
+labels:
+  - security
+```
+
+**`agents/my-security-agent/my-security-agent.md`:**
+
+```markdown
+# Security Analyst
+
+You are a security analyst specializing in threat detection and incident
+response. When the user reports a security concern:
+
+1. Use available ES|QL tools to query relevant log data
+2. Correlate events across data sources
+3. Provide actionable recommendations with severity assessment
+4. Suggest containment steps when threats are confirmed
+
+Always prioritize critical threats and provide clear, concise analysis.
+```
 
 ---
 

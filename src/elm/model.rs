@@ -166,6 +166,8 @@ pub enum Modal {
     Import(Box<ImportModal>),
     InstallPlugin(InstallPluginModal),
     GitHubImport(GitHubImportModal),
+    ImportAgent(Box<ImportAgentModal>),
+    GitHubImportAgent(GitHubImportAgentModal),
 }
 
 impl std::fmt::Debug for Modal {
@@ -179,6 +181,8 @@ impl std::fmt::Debug for Modal {
             Self::Import(_) => f.debug_tuple("Import").finish(),
             Self::InstallPlugin(_) => f.debug_tuple("InstallPlugin").finish(),
             Self::GitHubImport(_) => f.debug_tuple("GitHubImport").finish(),
+            Self::ImportAgent(_) => f.debug_tuple("ImportAgent").finish(),
+            Self::GitHubImportAgent(_) => f.debug_tuple("GitHubImportAgent").finish(),
         }
     }
 }
@@ -202,6 +206,19 @@ pub struct GitHubImportModal {
     pub url_buffer: String,
     pub cursor: usize,
     pub component_type: ComponentsTab,
+    pub error_message: Option<String>,
+    pub importing: bool,
+}
+
+pub struct ImportAgentModal {
+    pub file_explorer: FileExplorer,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GitHubImportAgentModal {
+    pub url_buffer: String,
+    pub cursor: usize,
     pub error_message: Option<String>,
     pub importing: bool,
 }

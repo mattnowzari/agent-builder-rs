@@ -266,6 +266,7 @@ fn execute_cmd(
                     client.create_agent(crate::agent_builder::CreateAgentRequest {
                         id, name, description, configuration: config,
                         avatar_color: None, avatar_symbol: None, labels: vec![],
+                        visibility: None,
                     }).await
                 };
 
@@ -578,6 +579,194 @@ fn execute_cmd(
                     ComponentsTab::Plugins => {
                         // Plugins use the InstallPluginFromUrl command instead.
                     }
+                }
+            });
+        }
+
+        Cmd::ImportAgentFromFile { path } => {
+            let cfg = model.config.clone();
+            rt.spawn(async move {
+                let yaml_path = std::path::PathBuf::from(&path);
+                let parent = match yaml_path.parent() {
+                    Some(p) => p.to_path_buf(),
+                    None => {
+                        let _ = tx.send(Msg::AgentUpsertFailed {
+                            error: "Cannot determine parent directory of YAML file.".to_string(),
+                        });
+                        return;
+                    }
+                };
+
+                let contents = match tokio::fs::read_to_string(&path).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(Msg::AgentUpsertFailed {
+                            error: format!("Failed to read YAML file: {e}"),
+                        });
+                        return;
+                    }
+                };
+                let agent_yaml = match crate::agent_builder::parse_agent_yaml(&contents) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        let _ = tx.send(Msg::AgentUpsertFailed {
+                            error: format!("YAML parse error: {e:#}"),
+                        });
+                        return;
+                    }
+                };
+
+                let instructions = match tokio::fs::read_to_string(parent.join(&agent_yaml.instructions)).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(Msg::AgentUpsertFailed {
+                            error: format!("Failed to read instructions file '{}': {e}", agent_yaml.instructions),
+                        });
+                        return;
+                    }
+                };
+
+                if !cfg.is_ready() {
+                    let _ = tx.send(Msg::AgentUpsertFailed {
+                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
+                    });
+                    return;
+                }
+                let client = match crate::agent_builder::AgentBuilderClient::new(&cfg) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(Msg::AgentUpsertFailed { error: format!("{e:#}") });
+                        return;
+                    }
+                };
+
+                let req = crate::agent_builder::CreateAgentRequest {
+                    id: agent_yaml.id,
+                    name: agent_yaml.name,
+                    description: agent_yaml.description,
+                    configuration: crate::agent_builder::AgentConfiguration {
+                        instructions: Some(instructions),
+                        tools: vec![crate::agent_builder::AgentTools { tool_ids: agent_yaml.tool_ids }],
+                        skill_ids: agent_yaml.skill_ids,
+                        plugin_ids: agent_yaml.plugin_ids,
+                        enable_elastic_capabilities: agent_yaml.enable_elastic_capabilities,
+                    },
+                    avatar_color: agent_yaml.avatar_color,
+                    avatar_symbol: agent_yaml.avatar_symbol,
+                    labels: agent_yaml.labels,
+                    visibility: agent_yaml.visibility,
+                };
+
+                match client.create_agent(req).await {
+                    Ok(agent) => { let _ = tx.send(Msg::AgentUpserted { agent, is_edit: false }); }
+                    Err(e) => { let _ = tx.send(Msg::AgentUpsertFailed { error: format!("{e:#}") }); }
+                }
+            });
+        }
+
+        Cmd::ImportAgentFromGitHub { url } => {
+            let cfg = model.config.clone();
+            rt.spawn(async move {
+                use crate::github::{derive_skill_yaml_path, parse_github_url};
+
+                let (gh_ref, is_dir) = match parse_github_url(&url) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let _ = tx.send(Msg::AgentUpsertFailed { error: format!("{e:#}") });
+                        return;
+                    }
+                };
+
+                let yaml_ref = if is_dir {
+                    let yaml_path = derive_skill_yaml_path(&gh_ref.path);
+                    crate::github::GitHubFileRef {
+                        owner: gh_ref.owner.clone(),
+                        repo: gh_ref.repo.clone(),
+                        git_ref: gh_ref.git_ref.clone(),
+                        path: yaml_path,
+                    }
+                } else {
+                    gh_ref
+                };
+
+                let http = reqwest::Client::builder()
+                    .build()
+                    .expect("failed to build HTTP client");
+
+                let fetch_raw = |raw_url: String| {
+                    let http = http.clone();
+                    async move {
+                        let resp = http.get(&raw_url).send().await
+                            .map_err(|e| anyhow::anyhow!("fetch failed for {raw_url}: {e}"))?;
+                        let status = resp.status();
+                        if !status.is_success() {
+                            anyhow::bail!("GitHub returned {status} for {raw_url}");
+                        }
+                        resp.text().await
+                            .map_err(|e| anyhow::anyhow!("failed to read body from {raw_url}: {e}"))
+                    }
+                };
+
+                let yaml_contents = match fetch_raw(yaml_ref.raw_url_self()).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(Msg::AgentUpsertFailed { error: format!("{e:#}") });
+                        return;
+                    }
+                };
+                let agent_yaml = match crate::agent_builder::parse_agent_yaml(&yaml_contents) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        let _ = tx.send(Msg::AgentUpsertFailed { error: format!("YAML parse error: {e:#}") });
+                        return;
+                    }
+                };
+
+                let instructions_path = yaml_ref.resolve_relative(&agent_yaml.instructions);
+                let instructions = match fetch_raw(yaml_ref.raw_url(&instructions_path)).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(Msg::AgentUpsertFailed {
+                            error: format!("Failed to fetch instructions '{}': {e:#}", agent_yaml.instructions),
+                        });
+                        return;
+                    }
+                };
+
+                if !cfg.is_ready() {
+                    let _ = tx.send(Msg::AgentUpsertFailed {
+                        error: "Missing KIBANA_URL and/or API_KEY.".to_string(),
+                    });
+                    return;
+                }
+                let client = match crate::agent_builder::AgentBuilderClient::new(&cfg) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(Msg::AgentUpsertFailed { error: format!("{e:#}") });
+                        return;
+                    }
+                };
+
+                let req = crate::agent_builder::CreateAgentRequest {
+                    id: agent_yaml.id,
+                    name: agent_yaml.name,
+                    description: agent_yaml.description,
+                    configuration: crate::agent_builder::AgentConfiguration {
+                        instructions: Some(instructions),
+                        tools: vec![crate::agent_builder::AgentTools { tool_ids: agent_yaml.tool_ids }],
+                        skill_ids: agent_yaml.skill_ids,
+                        plugin_ids: agent_yaml.plugin_ids,
+                        enable_elastic_capabilities: agent_yaml.enable_elastic_capabilities,
+                    },
+                    avatar_color: agent_yaml.avatar_color,
+                    avatar_symbol: agent_yaml.avatar_symbol,
+                    labels: agent_yaml.labels,
+                    visibility: agent_yaml.visibility,
+                };
+
+                match client.create_agent(req).await {
+                    Ok(agent) => { let _ = tx.send(Msg::AgentUpserted { agent, is_edit: false }); }
+                    Err(e) => { let _ = tx.send(Msg::AgentUpsertFailed { error: format!("{e:#}") }); }
                 }
             });
         }

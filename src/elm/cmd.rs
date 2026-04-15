@@ -34,4 +34,10 @@ pub enum Cmd {
         url: String,
         component_type: ComponentsTab,
     },
+    ImportAgentFromFile {
+        path: String,
+    },
+    ImportAgentFromGitHub {
+        url: String,
+    },
 }

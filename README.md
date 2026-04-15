@@ -31,19 +31,21 @@ The interface is split into four panels:
 
 ## Keybindings
 
-| Key | Action |
-|-----|--------|
-| `Tab` / `Shift+Tab` | Cycle panel focus |
-| `j` / `k` or arrow keys | Navigate lists |
-| `Enter` | Select item / send chat message |
-| `n` | New chat session |
-| `c` | Create agent |
-| `e` | Edit selected agent |
-| `d` | Delete selected agent |
-| `i` | Import tool/skill from YAML (in Components panel) |
-| `g` | Import tool/skill from GitHub URL (in Components panel) |
-| `Left` / `Right` | Switch Components tab |
-| `Ctrl+C` | Quit |
+| Key | Context | Action |
+|-----|---------|--------|
+| `Tab` / `Shift+Tab` | Global | Cycle panel focus |
+| `j` / `k` or arrow keys | Any list | Navigate lists |
+| `Enter` | Any list / Chat | Select item / send chat message |
+| `n` | Agents panel | New chat session |
+| `e` | Agents panel | Edit selected agent |
+| `d` | Agents panel | Delete selected agent |
+| `i` | Agents panel | Import agent from YAML |
+| `g` | Agents panel | Import agent from GitHub URL |
+| `i` | Components panel | Import tool/skill from YAML |
+| `g` | Components panel | Import tool/skill from GitHub URL |
+| `Left` / `Right` | Components panel | Switch Components tab |
+| `Ctrl+R` | Any panel | Refresh current panel |
+| `Ctrl+C` | Global | Quit |
 
 ## Getting Started
 
@@ -98,20 +100,24 @@ If `KIBANA_URL` or `API_KEY` are missing, the TUI will show a modal telling you 
 
 ## Importing Components
 
-Tools and skills can be imported from local YAML files or directly from GitHub.
+Tools, skills, and agents can be imported from local YAML files or directly from GitHub. Press `i` for local file import or `g` for GitHub import.
 
-**From local file:**
-1. Focus the **Components** panel (`Tab` to cycle)
-2. Switch to the **Tools** or **Skills** tab
-3. Press `i` to open the file explorer
-4. Navigate to the `.yaml` file and press `Enter`
+**Tools and Skills** — use `i` / `g` in the **Components** panel (switch to the Tools or Skills tab first).
 
-**From GitHub:**
-1. Focus the **Components** panel (`Tab` to cycle)
-2. Switch to the **Tools** or **Skills** tab
-3. Press `g` to open the GitHub import dialog
-4. Paste a GitHub file or folder URL (e.g. `https://github.com/org/repo/blob/main/tools/my-tool.yaml`)
-5. Press `Enter`
+**Agents** — use `i` / `g` in the **Agents** panel. An agent YAML folder contains a definition file plus a markdown instructions file (same pattern as skills).
+
+```yaml
+# agents/my-agent/my-agent.yaml
+id: my-agent
+name: My Agent
+description: "What this agent does"
+instructions: ./my-agent.md
+tool_ids:
+  - esql-user-lookup
+skill_ids:
+  - incident-response
+enable_elastic_capabilities: true
+```
 
 ### Tool YAML
 

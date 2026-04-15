@@ -10,8 +10,9 @@ use ratatui_explorer::{FileExplorerBuilder, Theme};
 use super::cmd::Cmd;
 use super::model::{
     ActivePanel, AgentEditorMode, ChatEntry, ChatRole, ChatSession, ComponentsTab,
-    ConfirmDeleteAgentModal, CreateAgentField, CreateAgentModal, CreateAgentTab, GitHubImportModal,
-    ImportModal, InstallPluginModal, Modal, Model,
+    ConfirmDeleteAgentModal, CreateAgentField, CreateAgentModal, CreateAgentTab,
+    GitHubImportAgentModal, GitHubImportModal, ImportAgentModal, ImportModal, InstallPluginModal,
+    Modal, Model,
 };
 use super::msg::Msg;
 use super::view::filtered_session_indices;
@@ -675,6 +676,51 @@ fn handle_agents_panel_key(
             }));
             Some(vec![])
         }
+        KeyCode::Char('i') => {
+            let theme = Theme::default()
+                .add_default_title()
+                .with_block(Block::default().borders(Borders::NONE))
+                .with_item_style(Style::default().fg(Color::White))
+                .with_dir_style(Style::default().fg(Color::Cyan))
+                .with_highlight_item_style(
+                    Style::default()
+                        .fg(Color::White)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .with_highlight_dir_style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .with_highlight_symbol("▶ ");
+
+            match FileExplorerBuilder::build_with_theme(theme) {
+                Ok(fe) => {
+                    model.modal = Some(Modal::ImportAgent(Box::new(ImportAgentModal {
+                        file_explorer: fe,
+                        error_message: None,
+                    })));
+                }
+                Err(e) => {
+                    model.modal = Some(Modal::Error {
+                        title: "File Explorer Error".to_string(),
+                        message: format!("{e}"),
+                    });
+                }
+            }
+            Some(vec![])
+        }
+        KeyCode::Char('g') => {
+            model.modal = Some(Modal::GitHubImportAgent(GitHubImportAgentModal {
+                url_buffer: String::new(),
+                cursor: 0,
+                error_message: None,
+                importing: false,
+            }));
+            Some(vec![])
+        }
         KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             model.agents_loading = true;
             model.agents_loaded = false;
@@ -1110,6 +1156,123 @@ fn update_modal_key(model: &mut Model, key: ratatui::crossterm::event::KeyEvent)
                         state.error_message = None;
                         let component_type = state.component_type;
                         return vec![Cmd::ImportComponentFromGitHub { url, component_type }];
+                    }
+                    vec![]
+                }
+                KeyCode::Char(c) => {
+                    state.url_buffer.insert(state.cursor, c);
+                    state.cursor += c.len_utf8();
+                    state.error_message = None;
+                    vec![]
+                }
+                KeyCode::Backspace => {
+                    if state.cursor > 0 {
+                        let prev = state.url_buffer[..state.cursor]
+                            .chars()
+                            .last()
+                            .map(|c| c.len_utf8())
+                            .unwrap_or(0);
+                        state.cursor -= prev;
+                        state.url_buffer.remove(state.cursor);
+                    }
+                    state.error_message = None;
+                    vec![]
+                }
+                KeyCode::Delete => {
+                    if state.cursor < state.url_buffer.len() {
+                        state.url_buffer.remove(state.cursor);
+                    }
+                    vec![]
+                }
+                KeyCode::Left => {
+                    if state.cursor > 0 {
+                        let prev = state.url_buffer[..state.cursor]
+                            .chars()
+                            .last()
+                            .map(|c| c.len_utf8())
+                            .unwrap_or(0);
+                        state.cursor -= prev;
+                    }
+                    vec![]
+                }
+                KeyCode::Right => {
+                    if state.cursor < state.url_buffer.len() {
+                        let next = state.url_buffer[state.cursor..]
+                            .chars()
+                            .next()
+                            .map(|c| c.len_utf8())
+                            .unwrap_or(0);
+                        state.cursor += next;
+                    }
+                    vec![]
+                }
+                KeyCode::Home => {
+                    state.cursor = 0;
+                    vec![]
+                }
+                KeyCode::End => {
+                    state.cursor = state.url_buffer.len();
+                    vec![]
+                }
+                _ => vec![],
+            }
+        }
+
+        Modal::ImportAgent(state) => {
+            if key.code == KeyCode::Esc {
+                model.modal = None;
+                return vec![];
+            }
+
+            if key.code == KeyCode::Enter {
+                let selected = state.file_explorer.current().clone();
+                if selected.is_file() {
+                    let path = &selected.path;
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("");
+                    if ext == "yaml" || ext == "yml" {
+                        let path_str = path.to_string_lossy().to_string();
+                        model.modal = None;
+                        return vec![Cmd::ImportAgentFromFile { path: path_str }];
+                    } else {
+                        state.error_message =
+                            Some("Only .yaml/.yml files are allowed.".to_string());
+                        return vec![];
+                    }
+                }
+            }
+
+            if matches!(key.code, KeyCode::Left | KeyCode::Right) {
+                return vec![];
+            }
+
+            state.error_message = None;
+            let event = ratatui::crossterm::event::Event::Key(key);
+            let _ = state.file_explorer.handle(&event);
+            vec![]
+        }
+
+        Modal::GitHubImportAgent(state) => {
+            if key.code == KeyCode::Esc {
+                model.modal = None;
+                return vec![];
+            }
+
+            if state.importing {
+                return vec![];
+            }
+
+            match key.code {
+                KeyCode::Enter => {
+                    let url = state.url_buffer.trim().to_string();
+                    if url.is_empty() {
+                        state.error_message = Some("URL is required.".to_string());
+                    } else {
+                        state.importing = true;
+                        state.error_message = None;
+                        return vec![Cmd::ImportAgentFromGitHub { url }];
                     }
                     vec![]
                 }

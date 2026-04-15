@@ -906,6 +906,8 @@ pub struct CreateAgentRequest {
     pub avatar_symbol: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub labels: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1174,4 +1176,38 @@ pub struct SkillReferencedContent {
 
 pub fn parse_skill_yaml(contents: &str) -> Result<SkillYaml> {
     serde_yaml::from_str(contents).context("failed to parse YAML skill definition")
+}
+
+// ---------------------------------------------------------------------------
+// YAML agent loading
+// ---------------------------------------------------------------------------
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AgentYaml {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    /// Relative path to the markdown instructions file.
+    pub instructions: String,
+    #[serde(default)]
+    pub tool_ids: Vec<String>,
+    #[serde(default)]
+    pub skill_ids: Vec<String>,
+    #[serde(default)]
+    pub plugin_ids: Vec<String>,
+    #[serde(default = "default_true")]
+    pub enable_elastic_capabilities: bool,
+    pub avatar_color: Option<String>,
+    pub avatar_symbol: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    pub visibility: Option<String>,
+}
+
+pub fn parse_agent_yaml(contents: &str) -> Result<AgentYaml> {
+    serde_yaml::from_str(contents).context("failed to parse YAML agent definition")
 }
