@@ -251,7 +251,10 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                     ),
                 });
             }
-            if matches!(model.modal, Some(Modal::CreateAgent(_))) {
+            if matches!(
+                model.modal,
+                Some(Modal::CreateAgent(_) | Modal::ImportAgent(_) | Modal::GitHubImportAgent(_))
+            ) {
                 model.modal = None;
             }
             model.selected_agent_id = Some(agent.id.clone());
@@ -269,9 +272,23 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         }
 
         Msg::AgentUpsertFailed { error } => {
-            if let Some(Modal::CreateAgent(state)) = &mut model.modal {
-                state.submitting = false;
-                state.error = Some(error);
+            match &mut model.modal {
+                Some(Modal::CreateAgent(state)) => {
+                    state.submitting = false;
+                    state.error = Some(error);
+                }
+                Some(Modal::GitHubImportAgent(_)) | Some(Modal::ImportAgent(_)) => {
+                    model.modal = Some(Modal::Error {
+                        title: "Agent Import Failed".to_string(),
+                        message: error,
+                    });
+                }
+                _ => {
+                    model.modal = Some(Modal::Error {
+                        title: "Agent Import Failed".to_string(),
+                        message: error,
+                    });
+                }
             }
             vec![]
         }
