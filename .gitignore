@@ -1,1 +1,5 @@
 /target
+
+# Themes — only ship the default Borealis theme
+themes/*
+!themes/elastic-borealis.yaml
