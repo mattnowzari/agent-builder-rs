@@ -1,0 +1,46 @@
+# Elastic Borealis (Dark Mode)
+#
+# Derived from the official EUI Borealis theme:
+#   https://github.com/elastic/eui/tree/main/packages/eui-theme-borealis
+#
+# Primitive color source reference:
+#   blue60   = #61A2FF    (primary in dark mode)
+#   pink60   = #EE72A6    (accent in dark mode)
+#   teal60   = #16C5C0    (accentSecondary in dark mode)
+#   green60  = #24C292    (success in dark mode)
+#   yellow40 = #FACB3D    (warning in dark mode)
+#   red60    = #F6726A    (danger in dark mode)
+#
+# Shades (blueGrey scale):
+#   blueGrey30  = #CAD3E2  (lightShade)
+#   blueGrey60  = #8E9FBC  (mediumShade)
+#   blueGrey95  = #516381  (textSubdued-ish)
+#   blueGrey100 = #485975  (borderBasePlain)
+#   blueGrey120 = #2B394F  (darkestShade)
+#   blueGrey125 = #243147  (selection bg)
+
+# Panel borders
+border_focused: "#61A2FF"
+border_normal: "#485975"
+
+# Text roles
+text_subtle: "#8E9FBC"
+text_error: "#F6726A"
+text_warning: "#FACB3D"
+text_primary: "#61A2FF"
+text_user: "#24C292"
+text_agent: "#EE72A6"
+
+# Thought process block
+thought_dim: "#516381"
+thought_tool: "#16C5C0"
+thought_reasoning: "#FACB3D"
+thought_result: "#24C292"
+
+# List selection highlight
+highlight_bg: "#243147"
+
+# File explorer
+file_text: "#CAD3E2"
+file_dir: "#16C5C0"
+file_highlight_bg: "#2B394F"

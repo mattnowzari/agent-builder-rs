@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers, MouseEventKind};
 use ratatui::widgets::ListState;
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders};
-use ratatui_explorer::{FileExplorerBuilder, Theme};
+use ratatui_explorer::{FileExplorerBuilder, Theme as ExplorerTheme};
 
 use super::cmd::Cmd;
 use super::model::{
@@ -91,8 +91,15 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
 
         // -- Config --
         Msg::EnvLoaded { config } => {
+            let theme_path = config.theme_path.clone();
             model.config = std::sync::Arc::new(config);
             model.env_loaded = true;
+
+            if let Some(path) = &theme_path {
+                model.theme = crate::theme::Theme::load(path);
+            } else if std::path::Path::new("themes/elastic-borealis.yaml").exists() {
+                model.theme = crate::theme::Theme::load("themes/elastic-borealis.yaml");
+            }
             if !model.config.is_ready() {
                 model.modal = Some(Modal::MissingEnv {
                     missing: model.config.missing(),
@@ -737,26 +744,26 @@ fn handle_agents_panel_key(
             Some(vec![])
         }
         KeyCode::Char('i') => {
-            let theme = Theme::default()
+            let fe_theme = ExplorerTheme::default()
                 .add_default_title()
                 .with_block(Block::default().borders(Borders::NONE))
-                .with_item_style(Style::default().fg(Color::White))
-                .with_dir_style(Style::default().fg(Color::Cyan))
+                .with_item_style(Style::default().fg(model.theme.file_text))
+                .with_dir_style(Style::default().fg(model.theme.file_dir))
                 .with_highlight_item_style(
                     Style::default()
-                        .fg(Color::White)
-                        .bg(Color::DarkGray)
+                        .fg(model.theme.file_text)
+                        .bg(model.theme.file_highlight_bg)
                         .add_modifier(Modifier::BOLD),
                 )
                 .with_highlight_dir_style(
                     Style::default()
-                        .fg(Color::Cyan)
-                        .bg(Color::DarkGray)
+                        .fg(model.theme.file_dir)
+                        .bg(model.theme.file_highlight_bg)
                         .add_modifier(Modifier::BOLD),
                 )
                 .with_highlight_symbol("▶ ");
 
-            match FileExplorerBuilder::build_with_theme(theme) {
+            match FileExplorerBuilder::build_with_theme(fe_theme) {
                 Ok(fe) => {
                     model.modal = Some(Modal::ImportAgent(Box::new(ImportAgentModal {
                         file_explorer: fe,
@@ -1035,26 +1042,26 @@ fn handle_components_panel_key(
                     installing: false,
                 }));
             } else {
-                let theme = Theme::default()
+                let fe_theme = ExplorerTheme::default()
                     .add_default_title()
                     .with_block(Block::default().borders(Borders::NONE))
-                    .with_item_style(Style::default().fg(Color::White))
-                    .with_dir_style(Style::default().fg(Color::Cyan))
+                    .with_item_style(Style::default().fg(model.theme.file_text))
+                    .with_dir_style(Style::default().fg(model.theme.file_dir))
                     .with_highlight_item_style(
                         Style::default()
-                            .fg(Color::White)
-                            .bg(Color::DarkGray)
+                            .fg(model.theme.file_text)
+                            .bg(model.theme.file_highlight_bg)
                             .add_modifier(Modifier::BOLD),
                     )
                     .with_highlight_dir_style(
                         Style::default()
-                            .fg(Color::Cyan)
-                            .bg(Color::DarkGray)
+                            .fg(model.theme.file_dir)
+                            .bg(model.theme.file_highlight_bg)
                             .add_modifier(Modifier::BOLD),
                     )
                     .with_highlight_symbol("▶ ");
 
-                match FileExplorerBuilder::build_with_theme(theme) {
+                match FileExplorerBuilder::build_with_theme(fe_theme) {
                     Ok(fe) => {
                         model.modal = Some(Modal::Import(Box::new(ImportModal {
                             file_explorer: fe,

@@ -12,16 +12,13 @@ use super::model::{
     CreateAgentTab, GitHubImportAgentModal, GitHubImportModal, ImportAgentModal, ImportModal,
     InstallPluginModal, Modal, Model, ConfirmDeleteConversationModal,
 };
+use crate::theme::Theme;
 
-const BORDER_NORMAL: Color = Color::Gray;
-const BORDER_FOCUSED: Color = Color::Cyan;
-const SUBTLE: Color = Color::Gray;
-
-fn panel_style(active: ActivePanel, this: ActivePanel) -> Style {
+fn panel_style(theme: &Theme, active: ActivePanel, this: ActivePanel) -> Style {
     if active == this {
-        Style::default().fg(BORDER_FOCUSED)
+        Style::default().fg(theme.border_focused)
     } else {
-        Style::default().fg(BORDER_NORMAL)
+        Style::default().fg(theme.border_normal)
     }
 }
 
@@ -46,8 +43,9 @@ pub fn view(frame: &mut Frame, model: &mut Model) {
     render_center_panel(frame, model, columns[1]);
     render_components_panel(frame, model, columns[2]);
 
+    let theme = model.theme.clone();
     if let Some(modal) = model.modal.as_mut() {
-        render_modal(frame, modal);
+        render_modal(frame, modal, &theme);
     }
 }
 
@@ -56,7 +54,8 @@ pub fn view(frame: &mut Frame, model: &mut Model) {
 // ---------------------------------------------------------------------------
 
 fn render_agents_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
-    let style = panel_style(model.active, ActivePanel::Agents);
+    let t = &model.theme;
+    let style = panel_style(t, model.active, ActivePanel::Agents);
 
     let agents_block = Block::default()
         .title(" Agents [↑↓] [Enter chat] [Ctrl+R refresh] ")
@@ -66,7 +65,7 @@ fn render_agents_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
 
     if !model.env_loaded || model.agents_loading {
         let msg = Paragraph::new("Loading agents...")
-            .style(Style::default().fg(SUBTLE))
+            .style(Style::default().fg(t.text_subtle))
             .block(agents_block);
         frame.render_widget(msg, area);
         return;
@@ -74,7 +73,7 @@ fn render_agents_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
 
     if let Some(err) = &model.agents_error {
         let msg = Paragraph::new(format!("Error: {err}\n\nCtrl+R to retry"))
-            .style(Style::default().fg(Color::Red))
+            .style(Style::default().fg(t.text_error))
             .block(agents_block)
             .wrap(Wrap { trim: false });
         frame.render_widget(msg, area);
@@ -83,7 +82,7 @@ fn render_agents_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
 
     if model.agents.is_empty() {
         let msg = Paragraph::new("No agents found.\n\nPress 'n' to create one.")
-            .style(Style::default().fg(SUBTLE))
+            .style(Style::default().fg(t.text_subtle))
             .block(agents_block);
         frame.render_widget(msg, area);
         return;
@@ -103,7 +102,7 @@ fn render_agents_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
                     lines.push(Line::from(Span::styled(
                         desc.to_string(),
                         Style::default()
-                            .fg(SUBTLE)
+                            .fg(t.text_subtle)
                             .add_modifier(Modifier::ITALIC),
                     )));
                 }
@@ -115,7 +114,7 @@ fn render_agents_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
     let list = List::new(items)
         .highlight_style(
             Style::default()
-                .bg(Color::Rgb(60, 60, 60))
+                .bg(t.highlight_bg)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▶ ");
@@ -173,7 +172,8 @@ pub fn filtered_session_indices(model: &Model) -> Vec<usize> {
 }
 
 fn render_chats_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
-    let style = panel_style(model.active, ActivePanel::Chats);
+    let t = &model.theme;
+    let style = panel_style(t, model.active, ActivePanel::Chats);
 
     let filtered = filtered_session_indices(model);
     let is_filtered = !model.agents.is_empty();
@@ -201,7 +201,7 @@ fn render_chats_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
             "No chats for this agent.\n\nPress Enter in Agents to start one."
         };
         let msg = Paragraph::new(empty_msg)
-            .style(Style::default().fg(SUBTLE))
+            .style(Style::default().fg(t.text_subtle))
             .block(chats_block);
         frame.render_widget(msg, area);
         return;
@@ -234,14 +234,14 @@ fn render_chats_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
             let line = Line::from(vec![
                 Span::styled(
                     format!("{indicator} "),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(t.text_primary),
                 ),
                 Span::raw(display_title),
                 Span::styled(
                     format!(" <{}>", s.agent_name),
-                    Style::default().fg(SUBTLE),
+                    Style::default().fg(t.text_subtle),
                 ),
-                Span::styled(status, Style::default().fg(SUBTLE)),
+                Span::styled(status, Style::default().fg(t.text_subtle)),
             ]);
             ListItem::new(line)
         })
@@ -250,7 +250,7 @@ fn render_chats_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
     let list = List::new(items)
         .highlight_style(
             Style::default()
-                .bg(Color::Rgb(60, 60, 60))
+                .bg(t.highlight_bg)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▶ ");
@@ -290,7 +290,7 @@ fn render_chats_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
 
 fn render_center_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
     let is_focused = model.active == ActivePanel::Chat;
-    let style = panel_style(model.active, ActivePanel::Chat);
+    let style = panel_style(&model.theme, model.active, ActivePanel::Chat);
 
     let border_overhead: u16 = 2;
     let inner_width = area.width.saturating_sub(border_overhead) as usize;
@@ -326,21 +326,23 @@ fn render_chat_history(frame: &mut Frame, model: &mut Model, style: Style, area:
     let inner = history_block.inner(area);
     let content_w = inner.width.saturating_sub(1); // leave room for scrollbar
 
+    let t = &model.theme;
     let mut lines: Vec<Line<'static>> = Vec::new();
-    let bubble_border = Style::default().fg(SUBTLE);
+    let bubble_border = Style::default().fg(t.text_subtle);
 
     if let Some(session) = model.active_session() {
         if session.history_loading {
             lines.push(Line::styled(
                 "Loading conversation history...",
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(t.text_warning),
             ));
         } else if session.from_server && !session.history_loaded && session.chat.is_empty() {
             lines.push(Line::styled(
                 "Press Enter in the Chats panel to load this conversation.",
-                Style::default().fg(SUBTLE),
+                Style::default().fg(t.text_subtle),
             ));
         } else {
+            let theme_snapshot = t.clone();
             for entry in &session.chat {
                 match entry.role {
                     ChatRole::User => {
@@ -348,10 +350,10 @@ fn render_chat_history(frame: &mut Frame, model: &mut Model, style: Style, area:
                             Span::styled(
                                 "[you]".to_string(),
                                 Style::default()
-                                    .fg(Color::Green)
+                                    .fg(theme_snapshot.text_user)
                                     .add_modifier(Modifier::BOLD),
                             ),
-                            Span::raw(" "), // keep clear of scrollbar
+                            Span::raw(" "),
                         ])
                         .right_aligned();
                         lines.push(label);
@@ -365,12 +367,12 @@ fn render_chat_history(frame: &mut Frame, model: &mut Model, style: Style, area:
                     }
                     ChatRole::Assistant => {
                         if !entry.steps.is_empty() {
-                            lines.extend(thought_process_lines(&entry.steps, content_w));
+                            lines.extend(thought_process_lines(&entry.steps, content_w, &theme_snapshot));
                         }
                         let label = Line::from(Span::styled(
                             "[agent]".to_string(),
                             Style::default()
-                                .fg(Color::Magenta)
+                                .fg(theme_snapshot.text_agent)
                                 .add_modifier(Modifier::BOLD),
                         ));
                         lines.push(label);
@@ -387,7 +389,7 @@ fn render_chat_history(frame: &mut Frame, model: &mut Model, style: Style, area:
                             Line::from(Span::styled(
                                 format!(">> {}", entry.content),
                                 Style::default()
-                                    .fg(Color::Yellow)
+                                    .fg(theme_snapshot.text_warning)
                                     .add_modifier(Modifier::ITALIC),
                             ))
                             .alignment(Alignment::Center),
@@ -402,7 +404,7 @@ fn render_chat_history(frame: &mut Frame, model: &mut Model, style: Style, area:
     if lines.is_empty() {
         lines.push(Line::styled(
             "Select an agent and press Enter to start a chat...",
-            Style::default().fg(SUBTLE),
+            Style::default().fg(t.text_subtle),
         ));
     }
 
@@ -523,10 +525,7 @@ fn truncate_title(title: &str, max_chars: usize) -> String {
 
 use crate::agent_builder::ToolStep;
 
-const THOUGHT_DIM: Color = Color::DarkGray;
-const THOUGHT_TOOL: Color = Color::Cyan;
-
-fn thought_process_lines(steps: &[ToolStep], width: u16) -> Vec<Line<'static>> {
+fn thought_process_lines(steps: &[ToolStep], width: u16, theme: &Theme) -> Vec<Line<'static>> {
     let w = width as usize;
     let mut out: Vec<Line<'static>> = Vec::new();
 
@@ -538,7 +537,7 @@ fn thought_process_lines(steps: &[ToolStep], width: u16) -> Vec<Line<'static>> {
     };
     out.push(Line::from(Span::styled(
         label,
-        Style::default().fg(THOUGHT_DIM).add_modifier(Modifier::ITALIC),
+        Style::default().fg(theme.thought_dim).add_modifier(Modifier::ITALIC),
     )));
 
     for (i, step) in steps.iter().enumerate() {
@@ -550,17 +549,17 @@ fn thought_process_lines(steps: &[ToolStep], width: u16) -> Vec<Line<'static>> {
             let max_chars = w.saturating_sub(7);
             let display = truncate_str(reasoning, max_chars);
             out.push(Line::from(vec![
-                Span::styled(format!("{connector} "), Style::default().fg(THOUGHT_DIM)),
-                Span::styled("💭 ", Style::default().fg(Color::Yellow)),
-                Span::styled(display, Style::default().fg(THOUGHT_DIM).add_modifier(Modifier::ITALIC)),
+                Span::styled(format!("{connector} "), Style::default().fg(theme.thought_dim)),
+                Span::styled("💭 ", Style::default().fg(theme.thought_reasoning)),
+                Span::styled(display, Style::default().fg(theme.thought_dim).add_modifier(Modifier::ITALIC)),
             ]));
         } else {
             out.push(Line::from(vec![
-                Span::styled(format!("{connector} "), Style::default().fg(THOUGHT_DIM)),
-                Span::styled("⚙ ", Style::default().fg(THOUGHT_TOOL)),
+                Span::styled(format!("{connector} "), Style::default().fg(theme.thought_dim)),
+                Span::styled("⚙ ", Style::default().fg(theme.thought_tool)),
                 Span::styled(
                     step.tool_id.clone(),
-                    Style::default().fg(THOUGHT_TOOL).add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.thought_tool).add_modifier(Modifier::BOLD),
                 ),
             ]));
 
@@ -568,9 +567,9 @@ fn thought_process_lines(steps: &[ToolStep], width: u16) -> Vec<Line<'static>> {
                 let max_chars = w.saturating_sub(8);
                 let display = truncate_str(&step.params_summary, max_chars);
                 out.push(Line::from(vec![
-                    Span::styled(format!("{continuation}   "), Style::default().fg(THOUGHT_DIM)),
-                    Span::styled("→ ", Style::default().fg(THOUGHT_DIM)),
-                    Span::styled(display, Style::default().fg(THOUGHT_DIM)),
+                    Span::styled(format!("{continuation}   "), Style::default().fg(theme.thought_dim)),
+                    Span::styled("→ ", Style::default().fg(theme.thought_dim)),
+                    Span::styled(display, Style::default().fg(theme.thought_dim)),
                 ]));
             }
 
@@ -578,9 +577,9 @@ fn thought_process_lines(steps: &[ToolStep], width: u16) -> Vec<Line<'static>> {
                 let max_chars = w.saturating_sub(8);
                 let display = truncate_str(&step.result_summary, max_chars);
                 out.push(Line::from(vec![
-                    Span::styled(format!("{continuation}   "), Style::default().fg(THOUGHT_DIM)),
-                    Span::styled("← ", Style::default().fg(Color::Green)),
-                    Span::styled(display, Style::default().fg(THOUGHT_DIM)),
+                    Span::styled(format!("{continuation}   "), Style::default().fg(theme.thought_dim)),
+                    Span::styled("← ", Style::default().fg(theme.thought_result)),
+                    Span::styled(display, Style::default().fg(theme.thought_dim)),
                 ]));
             }
         }
@@ -703,7 +702,7 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 fn render_components_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
-    let style = panel_style(model.active, ActivePanel::Components);
+    let style = panel_style(&model.theme, model.active, ActivePanel::Components);
 
     let outer_block = Block::default()
         .title(" Components [◀-▶ switch tab] ")
@@ -738,11 +737,12 @@ fn render_components_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
     })
     .highlight_style(
         Style::default()
-            .fg(Color::Cyan)
+            .fg(model.theme.text_primary)
             .add_modifier(Modifier::BOLD),
     );
     frame.render_widget(tabs, tabs_area);
 
+    let t = model.theme.clone();
     let (loading, error, label, items): (bool, Option<&str>, &str, Vec<(String, String, bool)>) =
         match model.components_tab {
             ComponentsTab::Plugins => (
@@ -813,6 +813,7 @@ fn render_components_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
         items,
         &mut model.components_list_state,
         model.components_selected_index,
+        &t,
     );
 }
 
@@ -825,23 +826,24 @@ fn render_components_list(
     items: Vec<(String, String, bool)>,
     list_state: &mut ListState,
     selected_index: usize,
+    theme: &Theme,
 ) {
     if loading {
         let msg = Paragraph::new(format!("Loading {label}..."))
-            .style(Style::default().fg(SUBTLE));
+            .style(Style::default().fg(theme.text_subtle));
         frame.render_widget(msg, area);
         return;
     }
     if let Some(err) = error {
         let msg = Paragraph::new(format!("Error: {err}"))
-            .style(Style::default().fg(Color::Red))
+            .style(Style::default().fg(theme.text_error))
             .wrap(Wrap { trim: false });
         frame.render_widget(msg, area);
         return;
     }
     if items.is_empty() {
         let msg = Paragraph::new(format!("No {label} available."))
-            .style(Style::default().fg(SUBTLE));
+            .style(Style::default().fg(theme.text_subtle));
         frame.render_widget(msg, area);
         return;
     }
@@ -851,11 +853,11 @@ fn render_components_list(
         .map(|(name, desc, readonly)| {
             let tag = if *readonly { " (built-in)" } else { "" };
             let line = Line::from(vec![
-                Span::styled("• ", Style::default().fg(Color::Cyan)),
+                Span::styled("• ", Style::default().fg(theme.text_primary)),
                 Span::raw(format!("{name} ")),
                 Span::styled(
                     format!("{desc}{tag}"),
-                    Style::default().fg(SUBTLE),
+                    Style::default().fg(theme.text_subtle),
                 ),
             ]);
             ListItem::new(line)
@@ -866,14 +868,14 @@ fn render_components_list(
     let list = List::new(list_items)
         .highlight_style(
             Style::default()
-                .bg(Color::Rgb(60, 60, 60))
+                .bg(theme.highlight_bg)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▶ ");
 
     let title_line = Line::from(Span::styled(
         format!(" {count} {label} "),
-        Style::default().fg(SUBTLE),
+        Style::default().fg(theme.text_subtle),
     ));
     let header = Paragraph::new(title_line);
 
@@ -940,7 +942,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         .split(vert[1])[1]
 }
 
-fn render_modal(frame: &mut Frame, modal: &mut Modal) {
+fn render_modal(frame: &mut Frame, modal: &mut Modal, theme: &Theme) {
     match modal {
         Modal::MissingEnv { missing } => {
             let rect = centered_rect(50, 30, frame.area());
@@ -954,18 +956,18 @@ fn render_modal(frame: &mut Frame, modal: &mut Modal) {
                     Block::default()
                         .title(" Missing Environment ")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Yellow)),
+                        .border_style(Style::default().fg(theme.text_warning)),
                 )
                 .wrap(Wrap { trim: false });
             frame.render_widget(widget, rect);
         }
 
         Modal::Info { title, message } => {
-            render_simple_modal(frame, title, message, Color::Cyan);
+            render_simple_modal(frame, title, message, theme.text_primary);
         }
 
         Modal::Error { title, message } => {
-            render_simple_modal(frame, title, message, Color::Red);
+            render_simple_modal(frame, title, message, theme.text_error);
         }
 
         Modal::ConfirmDeleteAgent(state) => {
@@ -984,38 +986,38 @@ fn render_modal(frame: &mut Frame, modal: &mut Modal) {
                     Block::default()
                         .title(" Confirm Delete ")
                         .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Red)),
+                        .border_style(Style::default().fg(theme.text_error)),
                 )
                 .wrap(Wrap { trim: false });
             frame.render_widget(widget, rect);
         }
 
         Modal::ConfirmDeleteConversation(state) => {
-            render_confirm_delete_conversation_modal(frame, state);
+            render_confirm_delete_conversation_modal(frame, state, theme);
         }
 
         Modal::CreateAgent(state) => {
-            render_create_agent_modal(frame, state);
+            render_create_agent_modal(frame, state, theme);
         }
 
         Modal::Import(state) => {
-            render_import_modal(frame, state);
+            render_import_modal(frame, state, theme);
         }
 
         Modal::InstallPlugin(state) => {
-            render_install_plugin_modal(frame, state);
+            render_install_plugin_modal(frame, state, theme);
         }
 
         Modal::GitHubImport(state) => {
-            render_github_import_modal(frame, state);
+            render_github_import_modal(frame, state, theme);
         }
 
         Modal::ImportAgent(state) => {
-            render_import_agent_modal(frame, state);
+            render_import_agent_modal(frame, state, theme);
         }
 
         Modal::GitHubImportAgent(state) => {
-            render_github_import_agent_modal(frame, state);
+            render_github_import_agent_modal(frame, state, theme);
         }
     }
 }
@@ -1035,7 +1037,7 @@ fn render_simple_modal(frame: &mut Frame, title: &str, message: &str, color: Col
     frame.render_widget(widget, rect);
 }
 
-fn render_confirm_delete_conversation_modal(frame: &mut Frame, state: &ConfirmDeleteConversationModal) {
+fn render_confirm_delete_conversation_modal(frame: &mut Frame, state: &ConfirmDeleteConversationModal, theme: &Theme) {
     let rect = centered_rect(50, 25, frame.area());
     frame.render_widget(Clear, rect);
     let msg = if state.deleting {
@@ -1051,13 +1053,13 @@ fn render_confirm_delete_conversation_modal(frame: &mut Frame, state: &ConfirmDe
             Block::default()
                 .title(" Delete Conversation ")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Red)),
+                .border_style(Style::default().fg(theme.text_error)),
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, rect);
 }
 
-fn render_import_modal(frame: &mut Frame, state: &ImportModal) {
+fn render_import_modal(frame: &mut Frame, state: &ImportModal, theme: &Theme) {
     let rect = centered_rect(60, 70, frame.area());
     frame.render_widget(Clear, rect);
 
@@ -1070,7 +1072,7 @@ fn render_import_modal(frame: &mut Frame, state: &ImportModal) {
     let outer_block = Block::default()
         .title(format!(" Import {type_label} from YAML "))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(theme.text_primary));
 
     let inner = outer_block.inner(rect);
     frame.render_widget(outer_block, rect);
@@ -1099,26 +1101,26 @@ fn render_import_modal(frame: &mut Frame, state: &ImportModal) {
     if let Some(err) = &state.error_message {
         footer_lines.push(Line::styled(
             err.as_str(),
-            Style::default().fg(Color::Red),
+            Style::default().fg(theme.text_error),
         ));
     }
     footer_lines.push(Line::styled(
         "[Enter] Select  [Esc] Cancel  [↑↓] Navigate  [←/Backspace] Up  [→/Enter] Open dir",
-        Style::default().fg(SUBTLE),
+        Style::default().fg(theme.text_subtle),
     ));
 
     let footer = Paragraph::new(footer_lines).wrap(Wrap { trim: false });
     frame.render_widget(footer, footer_area);
 }
 
-fn render_install_plugin_modal(frame: &mut Frame, state: &InstallPluginModal) {
+fn render_install_plugin_modal(frame: &mut Frame, state: &InstallPluginModal, theme: &Theme) {
     let rect = centered_rect(60, 30, frame.area());
     frame.render_widget(Clear, rect);
 
     let outer_block = Block::default()
         .title(" Install Plugin from URL ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(theme.text_primary));
 
     let inner = outer_block.inner(rect);
     frame.render_widget(outer_block, rect);
@@ -1152,7 +1154,7 @@ fn render_install_plugin_modal(frame: &mut Frame, state: &InstallPluginModal) {
 
     let input_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Gray));
+        .border_style(Style::default().fg(theme.border_normal));
     let input_inner = input_block.inner(layout[2]);
     let input = Paragraph::new(state.url_buffer.as_str()).block(input_block);
     frame.render_widget(input, layout[2]);
@@ -1165,22 +1167,22 @@ fn render_install_plugin_modal(frame: &mut Frame, state: &InstallPluginModal) {
     let mut row = 3;
     if has_error {
         let err = Paragraph::new(state.error_message.as_deref().unwrap_or(""))
-            .style(Style::default().fg(Color::Red));
+            .style(Style::default().fg(theme.text_error));
         frame.render_widget(err, layout[row]);
         row += 1;
     }
     if state.installing {
         let status = Paragraph::new("Installing...")
-            .style(Style::default().fg(Color::Yellow));
+            .style(Style::default().fg(theme.text_warning));
         frame.render_widget(status, layout[row]);
         row += 1;
     }
     let help = Paragraph::new("[Enter] Install  [Esc] Cancel")
-        .style(Style::default().fg(SUBTLE));
+        .style(Style::default().fg(theme.text_subtle));
     frame.render_widget(help, layout[row]);
 }
 
-fn render_github_import_modal(frame: &mut Frame, state: &GitHubImportModal) {
+fn render_github_import_modal(frame: &mut Frame, state: &GitHubImportModal, theme: &Theme) {
     let rect = centered_rect(65, 35, frame.area());
     frame.render_widget(Clear, rect);
 
@@ -1193,7 +1195,7 @@ fn render_github_import_modal(frame: &mut Frame, state: &GitHubImportModal) {
     let outer_block = Block::default()
         .title(format!(" Import {type_label} from GitHub "))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(theme.text_primary));
 
     let inner = outer_block.inner(rect);
     frame.render_widget(outer_block, rect);
@@ -1204,10 +1206,10 @@ fn render_github_import_modal(frame: &mut Frame, state: &GitHubImportModal) {
 
     let has_error = state.error_message.is_some();
     let mut constraints = vec![
-        Constraint::Length(1), // label
-        Constraint::Length(1), // example
-        Constraint::Length(1), // gap
-        Constraint::Length(3), // input box
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(3),
     ];
     if has_error {
         constraints.push(Constraint::Length(1));
@@ -1215,7 +1217,7 @@ fn render_github_import_modal(frame: &mut Frame, state: &GitHubImportModal) {
     if state.importing {
         constraints.push(Constraint::Length(1));
     }
-    constraints.push(Constraint::Length(1)); // help
+    constraints.push(Constraint::Length(1));
     constraints.push(Constraint::Min(0));
 
     let layout = Layout::default()
@@ -1231,12 +1233,12 @@ fn render_github_import_modal(frame: &mut Frame, state: &GitHubImportModal) {
         ComponentsTab::Skills => "e.g. https://github.com/org/repo/tree/main/skills/my-skill",
         ComponentsTab::Plugins => "e.g. https://github.com/org/repo",
     };
-    let example = Paragraph::new(example_text).style(Style::default().fg(SUBTLE));
+    let example = Paragraph::new(example_text).style(Style::default().fg(theme.text_subtle));
     frame.render_widget(example, layout[1]);
 
     let input_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Gray));
+        .border_style(Style::default().fg(theme.border_normal));
     let input_inner = input_block.inner(layout[3]);
     let input = Paragraph::new(state.url_buffer.as_str()).block(input_block);
     frame.render_widget(input, layout[3]);
@@ -1252,29 +1254,29 @@ fn render_github_import_modal(frame: &mut Frame, state: &GitHubImportModal) {
     let mut row = 4;
     if has_error {
         let err = Paragraph::new(state.error_message.as_deref().unwrap_or(""))
-            .style(Style::default().fg(Color::Red));
+            .style(Style::default().fg(theme.text_error));
         frame.render_widget(err, layout[row]);
         row += 1;
     }
     if state.importing {
         let status =
-            Paragraph::new("Fetching from GitHub...").style(Style::default().fg(Color::Yellow));
+            Paragraph::new("Fetching from GitHub...").style(Style::default().fg(theme.text_warning));
         frame.render_widget(status, layout[row]);
         row += 1;
     }
     let help =
-        Paragraph::new("[Enter] Import  [Esc] Cancel").style(Style::default().fg(SUBTLE));
+        Paragraph::new("[Enter] Import  [Esc] Cancel").style(Style::default().fg(theme.text_subtle));
     frame.render_widget(help, layout[row]);
 }
 
-fn render_import_agent_modal(frame: &mut Frame, state: &ImportAgentModal) {
+fn render_import_agent_modal(frame: &mut Frame, state: &ImportAgentModal, theme: &Theme) {
     let rect = centered_rect(60, 60, frame.area());
     frame.render_widget(Clear, rect);
 
     let outer_block = Block::default()
         .title(" Import Agent from YAML ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(theme.text_primary));
 
     let inner = outer_block.inner(rect);
     frame.render_widget(outer_block, rect);
@@ -1296,24 +1298,24 @@ fn render_import_agent_modal(frame: &mut Frame, state: &ImportAgentModal) {
     let footer_area = layout[1];
     let mut footer_lines = Vec::new();
     if let Some(err) = &state.error_message {
-        footer_lines.push(Line::styled(err.clone(), Style::default().fg(Color::Red)));
+        footer_lines.push(Line::styled(err.clone(), Style::default().fg(theme.text_error)));
     }
     footer_lines.push(Line::styled(
         "[Enter] Select  [Esc] Cancel  [↑↓] Navigate",
-        Style::default().fg(SUBTLE),
+        Style::default().fg(theme.text_subtle),
     ));
     let footer = Paragraph::new(footer_lines).wrap(Wrap { trim: false });
     frame.render_widget(footer, footer_area);
 }
 
-fn render_github_import_agent_modal(frame: &mut Frame, state: &GitHubImportAgentModal) {
+fn render_github_import_agent_modal(frame: &mut Frame, state: &GitHubImportAgentModal, theme: &Theme) {
     let rect = centered_rect(65, 35, frame.area());
     frame.render_widget(Clear, rect);
 
     let outer_block = Block::default()
         .title(" Import Agent from GitHub ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(theme.text_primary));
 
     let inner = outer_block.inner(rect);
     frame.render_widget(outer_block, rect);
@@ -1349,12 +1351,12 @@ fn render_github_import_agent_modal(frame: &mut Frame, state: &GitHubImportAgent
     let example = Paragraph::new(
         "e.g. https://github.com/org/repo/tree/main/agents/my-agent",
     )
-    .style(Style::default().fg(SUBTLE));
+    .style(Style::default().fg(theme.text_subtle));
     frame.render_widget(example, layout[1]);
 
     let input_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Gray));
+        .border_style(Style::default().fg(theme.border_normal));
     let input_inner = input_block.inner(layout[3]);
     let input = Paragraph::new(state.url_buffer.as_str()).block(input_block);
     frame.render_widget(input, layout[3]);
@@ -1370,22 +1372,22 @@ fn render_github_import_agent_modal(frame: &mut Frame, state: &GitHubImportAgent
     let mut row = 4;
     if has_error {
         let err = Paragraph::new(state.error_message.as_deref().unwrap_or(""))
-            .style(Style::default().fg(Color::Red));
+            .style(Style::default().fg(theme.text_error));
         frame.render_widget(err, layout[row]);
         row += 1;
     }
     if state.importing {
         let status =
-            Paragraph::new("Fetching from GitHub...").style(Style::default().fg(Color::Yellow));
+            Paragraph::new("Fetching from GitHub...").style(Style::default().fg(theme.text_warning));
         frame.render_widget(status, layout[row]);
         row += 1;
     }
     let help =
-        Paragraph::new("[Enter] Import  [Esc] Cancel").style(Style::default().fg(SUBTLE));
+        Paragraph::new("[Enter] Import  [Esc] Cancel").style(Style::default().fg(theme.text_subtle));
     frame.render_widget(help, layout[row]);
 }
 
-fn render_create_agent_modal(frame: &mut Frame, state: &mut CreateAgentModal) {
+fn render_create_agent_modal(frame: &mut Frame, state: &mut CreateAgentModal, theme: &Theme) {
     let rect = centered_rect(70, 70, frame.area());
     frame.render_widget(Clear, rect);
 
@@ -1397,7 +1399,7 @@ fn render_create_agent_modal(frame: &mut Frame, state: &mut CreateAgentModal) {
     let outer_block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(theme.text_primary));
 
     let inner = outer_block.inner(rect);
     frame.render_widget(outer_block, rect);
@@ -1427,14 +1429,14 @@ fn render_create_agent_modal(frame: &mut Frame, state: &mut CreateAgentModal) {
         CreateAgentTab::Skills => 2,
         CreateAgentTab::Plugins => 3,
     })
-    .highlight_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+    .highlight_style(Style::default().fg(theme.text_primary).add_modifier(Modifier::BOLD));
     frame.render_widget(tabs, tabs_area);
 
     match state.tab {
-        CreateAgentTab::Prompt => render_prompt_tab(frame, state, content_area),
-        CreateAgentTab::Tools => render_tools_tab(frame, state, content_area),
-        CreateAgentTab::Skills => render_skills_tab(frame, state, content_area),
-        CreateAgentTab::Plugins => render_plugins_tab(frame, state, content_area),
+        CreateAgentTab::Prompt => render_prompt_tab(frame, state, content_area, theme),
+        CreateAgentTab::Tools => render_tools_tab(frame, state, content_area, theme),
+        CreateAgentTab::Skills => render_skills_tab(frame, state, content_area, theme),
+        CreateAgentTab::Plugins => render_plugins_tab(frame, state, content_area, theme),
     }
 
     let mut help_lines = vec![Line::from(
@@ -1443,22 +1445,22 @@ fn render_create_agent_modal(frame: &mut Frame, state: &mut CreateAgentModal) {
     if state.submitting {
         help_lines.push(Line::styled(
             "Saving...",
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme.text_warning),
         ));
     }
     if let Some(err) = &state.error {
         help_lines.push(Line::styled(
             err.as_str(),
-            Style::default().fg(Color::Red),
+            Style::default().fg(theme.text_error),
         ));
     }
     let help = Paragraph::new(help_lines)
-        .style(Style::default().fg(SUBTLE))
+        .style(Style::default().fg(theme.text_subtle))
         .wrap(Wrap { trim: false });
     frame.render_widget(help, help_area);
 }
 
-fn render_prompt_tab(frame: &mut Frame, state: &CreateAgentModal, area: Rect) {
+fn render_prompt_tab(frame: &mut Frame, state: &CreateAgentModal, area: Rect, theme: &Theme) {
     let fields = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1469,8 +1471,8 @@ fn render_prompt_tab(frame: &mut Frame, state: &CreateAgentModal, area: Rect) {
         ])
         .split(area);
 
-    let focus_style = Style::default().fg(Color::Cyan);
-    let normal_style = Style::default().fg(BORDER_NORMAL);
+    let focus_style = Style::default().fg(theme.text_primary);
+    let normal_style = Style::default().fg(theme.border_normal);
 
     let name_style = if state.focus == CreateAgentField::Name {
         focus_style
@@ -1547,21 +1549,21 @@ fn render_prompt_tab(frame: &mut Frame, state: &CreateAgentModal, area: Rect) {
     frame.render_widget(ec_widget, fields[3]);
 }
 
-fn render_tools_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect) {
+fn render_tools_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect, theme: &Theme) {
     if state.tools_loading {
-        let msg = Paragraph::new("Loading tools...").style(Style::default().fg(SUBTLE));
+        let msg = Paragraph::new("Loading tools...").style(Style::default().fg(theme.text_subtle));
         frame.render_widget(msg, area);
         return;
     }
     if let Some(err) = &state.tools_error {
         let msg = Paragraph::new(format!("Error: {err}"))
-            .style(Style::default().fg(Color::Red))
+            .style(Style::default().fg(theme.text_error))
             .wrap(Wrap { trim: false });
         frame.render_widget(msg, area);
         return;
     }
     if state.tools.is_empty() {
-        let msg = Paragraph::new("No tools available.").style(Style::default().fg(SUBTLE));
+        let msg = Paragraph::new("No tools available.").style(Style::default().fg(theme.text_subtle));
         frame.render_widget(msg, area);
         return;
     }
@@ -1570,49 +1572,38 @@ fn render_tools_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect)
         .tools
         .iter()
         .map(|t| {
-            let checked = if state.selected_tool_ids.contains(&t.id) {
-                "[x]"
-            } else {
-                "[ ]"
-            };
+            let checked = if state.selected_tool_ids.contains(&t.id) { "[x]" } else { "[ ]" };
             let line = Line::from(vec![
-                Span::styled(format!("{checked} "), Style::default().fg(Color::Cyan)),
+                Span::styled(format!("{checked} "), Style::default().fg(theme.text_primary)),
                 Span::raw(&t.id),
-                Span::styled(
-                    format!("  {}", t.description),
-                    Style::default().fg(SUBTLE),
-                ),
+                Span::styled(format!("  {}", t.description), Style::default().fg(theme.text_subtle)),
             ]);
             ListItem::new(line)
         })
         .collect();
 
     let list = List::new(items)
-        .highlight_style(
-            Style::default()
-                .bg(Color::Rgb(60, 60, 60))
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(Style::default().bg(theme.highlight_bg).add_modifier(Modifier::BOLD))
         .highlight_symbol("▶ ");
 
     frame.render_stateful_widget(list, area, &mut state.tools_list_state);
 }
 
-fn render_skills_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect) {
+fn render_skills_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect, theme: &Theme) {
     if state.skills_loading {
-        let msg = Paragraph::new("Loading skills...").style(Style::default().fg(SUBTLE));
+        let msg = Paragraph::new("Loading skills...").style(Style::default().fg(theme.text_subtle));
         frame.render_widget(msg, area);
         return;
     }
     if let Some(err) = &state.skills_error {
         let msg = Paragraph::new(format!("Error: {err}"))
-            .style(Style::default().fg(Color::Red))
+            .style(Style::default().fg(theme.text_error))
             .wrap(Wrap { trim: false });
         frame.render_widget(msg, area);
         return;
     }
     if state.skills.is_empty() {
-        let msg = Paragraph::new("No skills available.").style(Style::default().fg(SUBTLE));
+        let msg = Paragraph::new("No skills available.").style(Style::default().fg(theme.text_subtle));
         frame.render_widget(msg, area);
         return;
     }
@@ -1621,23 +1612,15 @@ fn render_skills_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect
         .skills
         .iter()
         .map(|s| {
-            let checked = if state.selected_skill_ids.contains(&s.id) {
-                "[x]"
-            } else {
-                "[ ]"
-            };
-            let plugin_tag = s
-                .plugin_id
-                .as_deref()
-                .map(|_| " (plugin)")
-                .unwrap_or("");
+            let checked = if state.selected_skill_ids.contains(&s.id) { "[x]" } else { "[ ]" };
+            let plugin_tag = s.plugin_id.as_deref().map(|_| " (plugin)").unwrap_or("");
             let readonly_tag = if s.readonly { " (built-in)" } else { "" };
             let line = Line::from(vec![
-                Span::styled(format!("{checked} "), Style::default().fg(Color::Cyan)),
+                Span::styled(format!("{checked} "), Style::default().fg(theme.text_primary)),
                 Span::raw(format!("{} ", s.name)),
                 Span::styled(
                     format!("{}{readonly_tag}{plugin_tag}", s.description),
-                    Style::default().fg(SUBTLE),
+                    Style::default().fg(theme.text_subtle),
                 ),
             ]);
             ListItem::new(line)
@@ -1645,31 +1628,27 @@ fn render_skills_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect
         .collect();
 
     let list = List::new(items)
-        .highlight_style(
-            Style::default()
-                .bg(Color::Rgb(60, 60, 60))
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(Style::default().bg(theme.highlight_bg).add_modifier(Modifier::BOLD))
         .highlight_symbol("▶ ");
 
     frame.render_stateful_widget(list, area, &mut state.skills_list_state);
 }
 
-fn render_plugins_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect) {
+fn render_plugins_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rect, theme: &Theme) {
     if state.plugins_loading {
-        let msg = Paragraph::new("Loading plugins...").style(Style::default().fg(SUBTLE));
+        let msg = Paragraph::new("Loading plugins...").style(Style::default().fg(theme.text_subtle));
         frame.render_widget(msg, area);
         return;
     }
     if let Some(err) = &state.plugins_error {
         let msg = Paragraph::new(format!("Error: {err}"))
-            .style(Style::default().fg(Color::Red))
+            .style(Style::default().fg(theme.text_error))
             .wrap(Wrap { trim: false });
         frame.render_widget(msg, area);
         return;
     }
     if state.plugins.is_empty() {
-        let msg = Paragraph::new("No plugins available.").style(Style::default().fg(SUBTLE));
+        let msg = Paragraph::new("No plugins available.").style(Style::default().fg(theme.text_subtle));
         frame.render_widget(msg, area);
         return;
     }
@@ -1678,27 +1657,15 @@ fn render_plugins_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rec
         .plugins
         .iter()
         .map(|p| {
-            let checked = if state.selected_plugin_ids.contains(&p.id) {
-                "[x]"
-            } else {
-                "[ ]"
-            };
-            let skills_info = if p.skill_ids.is_empty() {
-                String::new()
-            } else {
-                format!(" ({} skills)", p.skill_ids.len())
-            };
-            let version_tag = if p.version.is_empty() {
-                String::new()
-            } else {
-                format!(" v{}", p.version)
-            };
+            let checked = if state.selected_plugin_ids.contains(&p.id) { "[x]" } else { "[ ]" };
+            let skills_info = if p.skill_ids.is_empty() { String::new() } else { format!(" ({} skills)", p.skill_ids.len()) };
+            let version_tag = if p.version.is_empty() { String::new() } else { format!(" v{}", p.version) };
             let line = Line::from(vec![
-                Span::styled(format!("{checked} "), Style::default().fg(Color::Cyan)),
+                Span::styled(format!("{checked} "), Style::default().fg(theme.text_primary)),
                 Span::raw(format!("{} ", p.name)),
                 Span::styled(
                     format!("{}{version_tag}{skills_info}", p.description),
-                    Style::default().fg(SUBTLE),
+                    Style::default().fg(theme.text_subtle),
                 ),
             ]);
             ListItem::new(line)
@@ -1706,11 +1673,7 @@ fn render_plugins_tab(frame: &mut Frame, state: &mut CreateAgentModal, area: Rec
         .collect();
 
     let list = List::new(items)
-        .highlight_style(
-            Style::default()
-                .bg(Color::Rgb(60, 60, 60))
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(Style::default().bg(theme.highlight_bg).add_modifier(Modifier::BOLD))
         .highlight_symbol("▶ ");
 
     frame.render_stateful_widget(list, area, &mut state.plugins_list_state);

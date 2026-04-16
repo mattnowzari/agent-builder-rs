@@ -6,6 +6,8 @@ pub struct Config {
     pub agent_id: String,
     /// Allow self-signed certs / hostname mismatches (dev / local Kibana).
     pub insecure_tls: bool,
+    /// Path to a theme YAML file. `None` means use defaults.
+    pub theme_path: Option<String>,
 }
 
 impl Default for Config {
@@ -16,6 +18,7 @@ impl Default for Config {
             space: None,
             agent_id: "elastic-ai-agent".to_string(),
             insecure_tls: false,
+            theme_path: None,
         }
     }
 }
@@ -59,6 +62,8 @@ pub fn load_from_env() -> Config {
             cfg.agent_id = agent_id;
         }
     }
+
+    cfg.theme_path = env_first_nonempty(&["THEME", "TUI_THEME"]);
 
     cfg
 }

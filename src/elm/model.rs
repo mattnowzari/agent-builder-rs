@@ -5,6 +5,7 @@ use ratatui_explorer::FileExplorer;
 
 use crate::agent_builder::{AgentSummary, PluginSummary, SkillSummary, ToolSummary, ToolStep};
 use crate::config::Config;
+use crate::theme::Theme;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ActivePanel {
@@ -109,6 +110,9 @@ pub struct Model {
 
     // -- Modal --
     pub modal: Option<Modal>,
+
+    // -- Theme --
+    pub theme: Theme,
 }
 
 impl ChatSession {
