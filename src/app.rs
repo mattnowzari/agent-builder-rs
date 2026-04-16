@@ -165,7 +165,7 @@ fn execute_cmd(
             spawn_api(rt, model.config.clone(), tx, move |e| Msg::ConversationHistoryFailed { conversation_id: cid, error: e }, move |client, tx| async move {
                 match client.get_conversation(&cid2).await {
                     Ok(detail) => {
-                        let messages: Vec<(String, String)> = detail.messages.into_iter().map(|m| (m.role, m.content)).collect();
+                        let messages: Vec<(String, String, Vec<crate::agent_builder::ToolStep>)> = detail.messages.into_iter().map(|m| (m.role, m.content, m.steps)).collect();
                         let _ = tx.send(Msg::ConversationHistoryLoaded { conversation_id: cid2, messages, model_name: detail.model_name });
                     }
                     Err(e) => { let _ = tx.send(Msg::ConversationHistoryFailed { conversation_id: cid2, error: format!("{e:#}") }); }
@@ -231,7 +231,7 @@ fn execute_cmd(
                 .and_then(|s| s.conversation_id.clone());
             spawn_api(rt, model.config.clone(), tx, |e| Msg::PromptResponseFailed { error: e }, move |client, tx| async move {
                 match client.converse(&text, conversation_id.as_deref()).await {
-                    Ok(res) => { let _ = tx.send(Msg::PromptResponseReceived { content: res.message, conversation_id: res.conversation_id, model_name: res.model_name }); }
+                    Ok(res) => { let _ = tx.send(Msg::PromptResponseReceived { content: res.message, conversation_id: res.conversation_id, model_name: res.model_name, steps: res.steps }); }
                     Err(e) => { let _ = tx.send(Msg::PromptResponseFailed { error: format!("{e:#}") }); }
                 }
             });

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ratatui::widgets::ListState;
 use ratatui_explorer::FileExplorer;
 
-use crate::agent_builder::{AgentSummary, PluginSummary, SkillSummary, ToolSummary};
+use crate::agent_builder::{AgentSummary, PluginSummary, SkillSummary, ToolSummary, ToolStep};
 use crate::config::Config;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +34,7 @@ pub enum ChatRole {
 pub struct ChatEntry {
     pub role: ChatRole,
     pub content: String,
+    pub steps: Vec<ToolStep>,
 }
 
 pub const MAX_CHAT_MESSAGES: usize = 2000;

@@ -1,6 +1,6 @@
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
 
-use crate::agent_builder::{AgentSummary, ConversationSummary, PluginSummary, SkillSummary, ToolSummary};
+use crate::agent_builder::{AgentSummary, ConversationSummary, PluginSummary, SkillSummary, ToolStep, ToolSummary};
 use crate::config::Config;
 
 #[derive(Debug, Clone)]
@@ -24,7 +24,7 @@ pub enum Msg {
     ConversationsLoadFailed { error: String },
     ConversationHistoryLoaded {
         conversation_id: String,
-        messages: Vec<(String, String)>,
+        messages: Vec<(String, String, Vec<ToolStep>)>,
         model_name: Option<String>,
     },
     ConversationHistoryFailed {
@@ -66,6 +66,6 @@ pub enum Msg {
     PluginInstallFromFileFailed { error: String },
 
     // -- Chat --
-    PromptResponseReceived { content: String, conversation_id: Option<String>, model_name: Option<String> },
+    PromptResponseReceived { content: String, conversation_id: Option<String>, model_name: Option<String>, steps: Vec<ToolStep> },
     PromptResponseFailed { error: String },
 }

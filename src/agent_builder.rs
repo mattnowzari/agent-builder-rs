@@ -15,9 +15,18 @@ pub struct ConversationSummary {
 }
 
 #[derive(Debug, Clone)]
+pub struct ToolStep {
+    pub tool_id: String,
+    pub reasoning: Option<String>,
+    pub params_summary: String,
+    pub result_summary: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct ConversationMessage {
     pub role: String,
     pub content: String,
+    pub steps: Vec<ToolStep>,
 }
 
 #[derive(Debug, Clone)]
@@ -180,6 +189,7 @@ impl AgentBuilderClient {
                         conversation_id: v.get("conversation_id").and_then(|c| c.as_str()).map(String::from),
                         message: msg.to_string(),
                         model_name: extract_model_name(&v),
+                        steps: extract_steps(&v),
                     });
                 }
             }
@@ -195,10 +205,13 @@ impl AgentBuilderClient {
             .unwrap_or("")
             .to_string();
 
+        let steps = extract_steps(&v);
+
         Ok(ConverseResult {
             conversation_id: v.get("conversation_id").and_then(|c| c.as_str()).map(String::from),
             message,
             model_name: extract_model_name(&v),
+            steps,
         })
     }
 
@@ -734,7 +747,7 @@ fn parse_conversation_detail(v: serde_json::Value) -> Result<ConversationDetail>
                     .to_string();
 
                 if !content.is_empty() {
-                    messages.push(ConversationMessage { role, content });
+                    messages.push(ConversationMessage { role, content, steps: Vec::new() });
                 }
             }
         }
@@ -762,10 +775,11 @@ fn parse_conversation_detail(v: serde_json::Value) -> Result<ConversationDetail>
                     messages.push(ConversationMessage {
                         role: "user".to_string(),
                         content: input,
+                        steps: Vec::new(),
                     });
                 }
 
-                // Agent response
+                // Agent response + tool-call steps
                 let response = round_obj
                     .get("response")
                     .and_then(|v| v.get("message"))
@@ -774,10 +788,13 @@ fn parse_conversation_detail(v: serde_json::Value) -> Result<ConversationDetail>
                     .unwrap_or("")
                     .to_string();
 
+                let steps = extract_steps(&serde_json::Value::Object(round_obj.clone()));
+
                 if !response.is_empty() {
                     messages.push(ConversationMessage {
                         role: "assistant".to_string(),
                         content: response,
+                        steps,
                     });
                 }
             }
@@ -813,7 +830,7 @@ fn parse_conversation_detail(v: serde_json::Value) -> Result<ConversationDetail>
                     .to_string();
 
                 if !content.is_empty() {
-                    messages.push(ConversationMessage { role, content });
+                    messages.push(ConversationMessage { role, content, steps: Vec::new() });
                 }
             }
         }
@@ -828,6 +845,7 @@ fn parse_conversation_detail(v: serde_json::Value) -> Result<ConversationDetail>
             content: format!(
                 "Could not parse messages from conversation response. Top-level keys: {keys:?}"
             ),
+            steps: Vec::new(),
         });
     }
 
@@ -842,6 +860,76 @@ fn extract_model_name(v: &serde_json::Value) -> Option<String> {
         .and_then(|mu| mu.get("model"))
         .and_then(|m| m.as_str())
         .map(String::from)
+}
+
+/// Extract tool-call and reasoning steps from a converse response or a single round.
+/// The API returns `steps[]` at the top level (converse) or inside each round (history).
+/// Each step has a `type` field: `"tool_call"` or `"reasoning"`.
+fn extract_steps(v: &serde_json::Value) -> Vec<ToolStep> {
+    let steps_arr = v
+        .get("steps")
+        .or_else(|| v.pointer("/response/steps"))
+        .and_then(|s| s.as_array());
+
+    let Some(arr) = steps_arr else {
+        return Vec::new();
+    };
+
+    arr.iter()
+        .filter_map(|step| {
+            let step_type = step.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+            match step_type {
+                "tool_call" => {
+                    let tool_id = step.get("tool_id").and_then(|t| t.as_str()).unwrap_or("unknown");
+                    let params = step.get("params").cloned().unwrap_or(serde_json::Value::Null);
+
+                    // Results is an array; summarise the first entry's data
+                    let result = step
+                        .get("results")
+                        .and_then(|r| r.as_array())
+                        .and_then(|arr| arr.first())
+                        .and_then(|entry| entry.get("data"))
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+
+                    Some(ToolStep {
+                        tool_id: tool_id.to_string(),
+                        reasoning: None,
+                        params_summary: summarise_json(&params, 120),
+                        result_summary: summarise_json(&result, 200),
+                    })
+                }
+                "reasoning" => {
+                    let text = step.get("reasoning").and_then(|r| r.as_str()).unwrap_or("");
+                    if text.is_empty() {
+                        return None;
+                    }
+                    Some(ToolStep {
+                        tool_id: String::new(),
+                        reasoning: Some(text.to_string()),
+                        params_summary: String::new(),
+                        result_summary: String::new(),
+                    })
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// Produce a compact, truncated string representation of a JSON value.
+fn summarise_json(v: &serde_json::Value, max_len: usize) -> String {
+    let raw = match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => String::new(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    };
+    if raw.len() <= max_len {
+        raw
+    } else {
+        format!("{}…", &raw[..max_len])
+    }
 }
 
 /// Extract model name from the last round's `model_usage` in a conversation detail.
@@ -892,6 +980,7 @@ pub struct ConverseResult {
     pub conversation_id: Option<String>,
     pub message: String,
     pub model_name: Option<String>,
+    pub steps: Vec<ToolStep>,
 }
 
 #[derive(Debug, Deserialize)]

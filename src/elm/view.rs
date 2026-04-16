@@ -364,6 +364,9 @@ fn render_chat_history(frame: &mut Frame, model: &mut Model, style: Style, area:
                         lines.push(Line::from(""));
                     }
                     ChatRole::Assistant => {
+                        if !entry.steps.is_empty() {
+                            lines.extend(thought_process_lines(&entry.steps, content_w));
+                        }
                         let label = Line::from(Span::styled(
                             "[agent]".to_string(),
                             Style::default()
@@ -512,6 +515,87 @@ fn truncate_title(title: &str, max_chars: usize) -> String {
         let truncated: String = trimmed.chars().take(max_chars).collect();
         format!("{truncated}...")
     }
+}
+
+// ---------------------------------------------------------------------------
+// Thought process (tool-call steps) rendering
+// ---------------------------------------------------------------------------
+
+use crate::agent_builder::ToolStep;
+
+const THOUGHT_DIM: Color = Color::DarkGray;
+const THOUGHT_TOOL: Color = Color::Cyan;
+
+fn thought_process_lines(steps: &[ToolStep], width: u16) -> Vec<Line<'static>> {
+    let w = width as usize;
+    let mut out: Vec<Line<'static>> = Vec::new();
+
+    let tool_calls = steps.iter().filter(|s| !s.tool_id.is_empty()).count();
+    let label = if tool_calls > 0 {
+        format!(" ╭─ Thought Process ({tool_calls} tool call{}) ", if tool_calls == 1 { "" } else { "s" })
+    } else {
+        " ╭─ Thought Process ".to_string()
+    };
+    out.push(Line::from(Span::styled(
+        label,
+        Style::default().fg(THOUGHT_DIM).add_modifier(Modifier::ITALIC),
+    )));
+
+    for (i, step) in steps.iter().enumerate() {
+        let is_last = i + 1 == steps.len();
+        let connector = if is_last { " ╰" } else { " │" };
+        let continuation = if is_last { "  " } else { " │" };
+
+        if let Some(reasoning) = &step.reasoning {
+            let max_chars = w.saturating_sub(7);
+            let display = truncate_str(reasoning, max_chars);
+            out.push(Line::from(vec![
+                Span::styled(format!("{connector} "), Style::default().fg(THOUGHT_DIM)),
+                Span::styled("💭 ", Style::default().fg(Color::Yellow)),
+                Span::styled(display, Style::default().fg(THOUGHT_DIM).add_modifier(Modifier::ITALIC)),
+            ]));
+        } else {
+            out.push(Line::from(vec![
+                Span::styled(format!("{connector} "), Style::default().fg(THOUGHT_DIM)),
+                Span::styled("⚙ ", Style::default().fg(THOUGHT_TOOL)),
+                Span::styled(
+                    step.tool_id.clone(),
+                    Style::default().fg(THOUGHT_TOOL).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+
+            if !step.params_summary.is_empty() {
+                let max_chars = w.saturating_sub(8);
+                let display = truncate_str(&step.params_summary, max_chars);
+                out.push(Line::from(vec![
+                    Span::styled(format!("{continuation}   "), Style::default().fg(THOUGHT_DIM)),
+                    Span::styled("→ ", Style::default().fg(THOUGHT_DIM)),
+                    Span::styled(display, Style::default().fg(THOUGHT_DIM)),
+                ]));
+            }
+
+            if !step.result_summary.is_empty() {
+                let max_chars = w.saturating_sub(8);
+                let display = truncate_str(&step.result_summary, max_chars);
+                out.push(Line::from(vec![
+                    Span::styled(format!("{continuation}   "), Style::default().fg(THOUGHT_DIM)),
+                    Span::styled("← ", Style::default().fg(Color::Green)),
+                    Span::styled(display, Style::default().fg(THOUGHT_DIM)),
+                ]));
+            }
+        }
+    }
+
+    out.push(Line::from(""));
+    out
+}
+
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    if max_chars < 4 || s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let end = s.char_indices().nth(max_chars - 1).map(|(i, _)| i).unwrap_or(s.len());
+    format!("{}…", &s[..end])
 }
 
 // ---------------------------------------------------------------------------

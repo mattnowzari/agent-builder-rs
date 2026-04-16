@@ -251,6 +251,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                         agent.name,
                         agent.id
                     ),
+                    steps: Vec::new(),
                 });
             }
             if matches!(
@@ -301,6 +302,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 session.push_chat(ChatEntry {
                     role: ChatRole::System,
                     content: format!("Deleted agent: {name}"),
+                    steps: Vec::new(),
                 });
             }
             model.agents_loaded = false;
@@ -496,6 +498,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 session.push_chat(ChatEntry {
                     role: ChatRole::System,
                     content: format!("Failed to load conversations: {error}"),
+                    steps: Vec::new(),
                 });
             }
             vec![]
@@ -517,7 +520,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 if model_name.is_some() {
                     session.model_name = model_name;
                 }
-                for (role, content) in messages {
+                for (role, content, steps) in messages {
                     let chat_role = match role.as_str() {
                         "user" | "human" => ChatRole::User,
                         "assistant" | "ai" | "bot" => ChatRole::Assistant,
@@ -526,6 +529,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                     session.push_chat(ChatEntry {
                         role: chat_role,
                         content,
+                        steps,
                     });
                 }
             }
@@ -545,6 +549,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 session.push_chat(ChatEntry {
                     role: ChatRole::System,
                     content: format!("Failed to load history: {error}"),
+                    steps: Vec::new(),
                 });
             }
             vec![]
@@ -555,6 +560,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             content,
             conversation_id,
             model_name,
+            steps,
         } => {
             if let Some(session) = model.active_session_mut() {
                 session.waiting_for_response = false;
@@ -565,6 +571,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 session.push_chat(ChatEntry {
                     role: ChatRole::Assistant,
                     content,
+                    steps,
                 });
                 session.chat_scroll_from_bottom = 0;
             }
@@ -577,6 +584,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 session.push_chat(ChatEntry {
                     role: ChatRole::Assistant,
                     content: format!("Error: {error}"),
+                    steps: Vec::new(),
                 });
                 session.chat_scroll_from_bottom = 0;
             }
@@ -636,6 +644,7 @@ fn handle_agents_panel_key(
                     chat: vec![ChatEntry {
                         role: ChatRole::System,
                         content: format!("New chat with {agent_name} ({agent_id})"),
+                        steps: Vec::new(),
                     }],
                     input_buffer: String::new(),
                     input_cursor: 0,
@@ -1798,6 +1807,7 @@ fn handle_chat_input_key(
             session.push_chat(ChatEntry {
                 role: ChatRole::User,
                 content: text.clone(),
+                steps: Vec::new(),
             });
             session.input_buffer.clear();
             session.input_cursor = 0;
