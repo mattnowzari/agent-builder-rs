@@ -376,11 +376,11 @@ fn render_chat_history(frame: &mut Frame, model: &mut Model, style: Style, area:
                                 .add_modifier(Modifier::BOLD),
                         ));
                         lines.push(label);
-                        lines.extend(bubble_lines(
+                        lines.extend(markdown_bubble_lines(
                             &entry.content,
                             content_w,
                             bubble_border,
-                            false,
+                            &theme_snapshot,
                         ));
                         lines.push(Line::from(""));
                     }
@@ -676,6 +676,262 @@ fn bubble_lines(
     ]));
 
     out
+}
+
+/// Custom StyleSheet that maps tui-markdown styles to our theme.
+#[derive(Clone)]
+struct ThemeStyleSheet {
+    heading_color: Color,
+    code_bg: Color,
+    text_subtle: Color,
+    text_primary: Color,
+}
+
+impl tui_markdown::StyleSheet for ThemeStyleSheet {
+    fn heading(&self, level: u8) -> Style {
+        match level {
+            1 => Style::default()
+                .fg(self.heading_color)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            2 => Style::default()
+                .fg(self.heading_color)
+                .add_modifier(Modifier::BOLD),
+            3 => Style::default()
+                .fg(self.heading_color)
+                .add_modifier(Modifier::BOLD | Modifier::ITALIC),
+            _ => Style::default()
+                .fg(self.heading_color)
+                .add_modifier(Modifier::ITALIC),
+        }
+    }
+
+    fn code(&self) -> Style {
+        Style::default().bg(self.code_bg)
+    }
+
+    fn link(&self) -> Style {
+        Style::default()
+            .fg(self.text_primary)
+            .add_modifier(Modifier::UNDERLINED)
+    }
+
+    fn blockquote(&self) -> Style {
+        Style::default().fg(self.text_subtle)
+    }
+
+    fn heading_meta(&self) -> Style {
+        Style::default().fg(self.text_subtle)
+    }
+
+    fn metadata_block(&self) -> Style {
+        Style::default().fg(self.text_subtle)
+    }
+}
+
+/// Strip the leading `# `, `## `, etc. prefix from heading lines produced by
+/// tui_markdown, keeping only the text with the line-level heading style.
+fn strip_heading_prefix(line: Line<'static>) -> Line<'static> {
+    if line.spans.is_empty() {
+        return line;
+    }
+    let first_content = line.spans[0].content.as_ref();
+    let is_heading = first_content.starts_with('#')
+        && first_content.chars().all(|c| c == '#' || c == ' ');
+    if !is_heading {
+        return line;
+    }
+    let style = line.style;
+    let alignment = line.alignment;
+    let mut new_spans: Vec<Span<'static>> = line
+        .spans
+        .into_iter()
+        .skip(1)
+        .map(span_to_owned)
+        .collect();
+    if new_spans.is_empty() {
+        new_spans.push(Span::raw(""));
+    }
+    let mut new_line = Line::from(new_spans);
+    new_line.style = style;
+    new_line.alignment = alignment;
+    new_line
+}
+
+/// Render markdown content inside a left-aligned chat bubble.
+/// Uses `tui_markdown` to parse MD into styled lines, then wraps them into
+/// the bubble border frame.
+fn markdown_bubble_lines(
+    content: &str,
+    width: u16,
+    border_style: Style,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let total_w = width as usize;
+    if total_w < 6 {
+        return bubble_lines(content, width, border_style, false);
+    }
+
+    let margin = 1usize;
+    let max_bubble_w = total_w.saturating_sub(margin).max(4);
+    let max_inner_w = max_bubble_w.saturating_sub(2).max(1);
+
+    let style_sheet = ThemeStyleSheet {
+        heading_color: theme.text_primary,
+        code_bg: theme.highlight_bg,
+        text_subtle: theme.text_subtle,
+        text_primary: theme.text_primary,
+    };
+    let options = tui_markdown::Options::new(style_sheet);
+    let md_text = tui_markdown::from_str_with_options(content, &options);
+
+    let mut wrapped_lines: Vec<Line<'static>> = Vec::new();
+    for line in md_text.lines {
+        let cleaned = strip_heading_prefix(line_to_owned(line));
+        let char_count = line_char_width(&cleaned);
+        if char_count <= max_inner_w {
+            wrapped_lines.push(cleaned);
+        } else {
+            wrapped_lines.extend(wrap_styled_line(cleaned, max_inner_w));
+        }
+    }
+
+    if wrapped_lines.is_empty() {
+        wrapped_lines.push(Line::from(""));
+    }
+
+    let longest = wrapped_lines
+        .iter()
+        .map(|l| line_char_width(l))
+        .max()
+        .unwrap_or(1);
+    let inner_w = longest.clamp(1, max_inner_w);
+    let bubble_w = inner_w + 2;
+
+    let left_pad = margin;
+    let _ = bubble_w; // used implicitly via inner_w
+    let pad = " ".repeat(left_pad);
+
+    let mut out: Vec<Line<'static>> = Vec::new();
+
+    out.push(Line::from(vec![
+        Span::raw(pad.clone()),
+        Span::styled("┌".to_string(), border_style),
+        Span::styled("─".repeat(inner_w), border_style),
+        Span::styled("┐".to_string(), border_style),
+    ]));
+
+    for line in wrapped_lines {
+        let w = line_char_width(&line);
+        let trailing = if w < inner_w {
+            " ".repeat(inner_w - w)
+        } else {
+            String::new()
+        };
+
+        let line_style = line.style;
+        let mut spans = vec![
+            Span::raw(pad.clone()),
+            Span::styled("│".to_string(), border_style),
+        ];
+        for s in line.spans {
+            let merged = line_style.patch(s.style);
+            spans.push(Span::styled(s.content.into_owned(), merged));
+        }
+        spans.push(Span::styled(trailing, line_style));
+        spans.push(Span::styled("│".to_string(), border_style));
+
+        out.push(Line::from(spans));
+    }
+
+    out.push(Line::from(vec![
+        Span::raw(pad),
+        Span::styled("└".to_string(), border_style),
+        Span::styled("─".repeat(inner_w), border_style),
+        Span::styled("┘".to_string(), border_style),
+    ]));
+
+    out
+}
+
+fn line_to_owned(line: Line<'_>) -> Line<'static> {
+    let style = line.style;
+    let alignment = line.alignment;
+    let mut owned = Line::from(line.spans.into_iter().map(span_to_owned).collect::<Vec<_>>());
+    owned.style = style;
+    owned.alignment = alignment;
+    owned
+}
+
+fn span_to_owned(span: Span<'_>) -> Span<'static> {
+    Span::styled(span.content.into_owned(), span.style)
+}
+
+fn line_char_width(line: &Line<'_>) -> usize {
+    line.spans
+        .iter()
+        .map(|s| s.content.chars().count())
+        .sum()
+}
+
+/// Word-wrap a styled `Line` to fit within `max_w` characters, preserving span and line styles.
+fn wrap_styled_line(line: Line<'static>, max_w: usize) -> Vec<Line<'static>> {
+    if max_w == 0 {
+        return vec![line];
+    }
+
+    let line_style = line.style;
+    let mut result: Vec<Line<'static>> = Vec::new();
+    let mut current_spans: Vec<Span<'static>> = Vec::new();
+    let mut current_len: usize = 0;
+
+    for span in line.spans {
+        let style = span.style;
+        let text: String = span.content.into_owned();
+
+        let mut remaining = text.as_str();
+        while !remaining.is_empty() {
+            let space_left = max_w.saturating_sub(current_len);
+            if space_left == 0 {
+                let mut l = Line::from(std::mem::take(&mut current_spans));
+                l.style = line_style;
+                result.push(l);
+                current_len = 0;
+                continue;
+            }
+
+            let chunk_end = remaining
+                .char_indices()
+                .nth(space_left)
+                .map(|(i, _)| i)
+                .unwrap_or(remaining.len());
+
+            let chunk = &remaining[..chunk_end];
+            current_spans.push(Span::styled(chunk.to_string(), style));
+            current_len += chunk.chars().count();
+            remaining = &remaining[chunk_end..];
+
+            if !remaining.is_empty() {
+                let mut l = Line::from(std::mem::take(&mut current_spans));
+                l.style = line_style;
+                result.push(l);
+                current_len = 0;
+            }
+        }
+    }
+
+    if !current_spans.is_empty() {
+        let mut l = Line::from(current_spans);
+        l.style = line_style;
+        result.push(l);
+    }
+
+    if result.is_empty() {
+        let mut l = Line::from("");
+        l.style = line_style;
+        result.push(l);
+    }
+
+    result
 }
 
 fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
