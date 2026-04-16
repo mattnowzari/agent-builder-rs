@@ -919,16 +919,17 @@ fn extract_steps(v: &serde_json::Value) -> Vec<ToolStep> {
 }
 
 /// Produce a compact, truncated string representation of a JSON value.
-fn summarise_json(v: &serde_json::Value, max_len: usize) -> String {
+fn summarise_json(v: &serde_json::Value, max_chars: usize) -> String {
     let raw = match v {
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Null => String::new(),
         other => serde_json::to_string(other).unwrap_or_default(),
     };
-    if raw.len() <= max_len {
+    if raw.chars().count() <= max_chars {
         raw
     } else {
-        format!("{}…", &raw[..max_len])
+        let truncated: String = raw.chars().take(max_chars).collect();
+        format!("{truncated}…")
     }
 }
 
