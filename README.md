@@ -1,6 +1,6 @@
 # agent-builder-rs
 
-A TUI (terminal user interface) version of [Kibana Agent Builder](https://www.elastic.co/docs/solutions/security/ai/ai-assistant-agent-builder). Create and manage agents, chat with them, browse conversation history, inspect tools/skills/plugins, and import custom components from YAML — all from your terminal.
+A TUI (terminal user interface) version of [Elastic Agent Builder](https://www.elastic.co/elasticsearch/agent-builder). Create and manage agents, chat with them, browse conversation history, inspect tools/skills/plugins, and import custom components from YAML — all from your terminal.
 
 > **Note:** This is a community project and is **not** an official Elastic product.
 
