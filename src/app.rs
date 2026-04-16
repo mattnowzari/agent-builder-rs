@@ -773,6 +773,16 @@ fn execute_cmd(
             });
         }
 
+        Cmd::DeleteConversation { id } => {
+            spawn_api(rt, model.config.clone(), tx, |e| Msg::ConversationDeleteFailed { error: e }, move |client, tx| async move {
+                if let Err(e) = client.delete_conversation(&id).await {
+                    let _ = tx.send(Msg::ConversationDeleteFailed { error: format!("{e:#}") });
+                    return;
+                }
+                let _ = tx.send(Msg::ConversationDeleted { conversation_id: id });
+            });
+        }
+
         Cmd::DeleteAgent { id } => {
             let agent_name = model
                 .agents

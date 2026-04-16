@@ -10,7 +10,7 @@ use ratatui_explorer::{FileExplorerBuilder, Theme};
 use super::cmd::Cmd;
 use super::model::{
     ActivePanel, AgentEditorMode, ChatEntry, ChatRole, ChatSession, ComponentsTab,
-    ConfirmDeleteAgentModal, CreateAgentField, CreateAgentModal, CreateAgentTab,
+    ConfirmDeleteAgentModal, ConfirmDeleteConversationModal, CreateAgentField, CreateAgentModal, CreateAgentTab,
     GitHubImportAgentModal, GitHubImportModal, ImportAgentModal, ImportModal, InstallPluginModal,
     Modal, Model,
 };
@@ -313,6 +313,38 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         }
 
         Msg::AgentDeleteFailed { error } => {
+            model.modal = Some(Modal::Error {
+                title: "Delete failed".to_string(),
+                message: error,
+            });
+            vec![]
+        }
+
+        Msg::ConversationDeleted { conversation_id } => {
+            model.modal = None;
+            // Remove the session that matches the deleted conversation.
+            if let Some(idx) = model
+                .sessions
+                .iter()
+                .position(|s| s.conversation_id.as_deref() == Some(&conversation_id))
+            {
+                model.sessions.remove(idx);
+                match model.active_session_index {
+                    Some(active) if active == idx => {
+                        let filtered = filtered_session_indices(model);
+                        model.active_session_index = filtered.first().copied();
+                    }
+                    Some(active) if active > idx => {
+                        model.active_session_index = Some(active - 1);
+                    }
+                    _ => {}
+                }
+                sync_sessions_list_state(model);
+            }
+            vec![]
+        }
+
+        Msg::ConversationDeleteFailed { error } => {
             model.modal = Some(Modal::Error {
                 title: "Delete failed".to_string(),
                 message: error,
@@ -829,26 +861,39 @@ fn handle_chats_panel_key(
             }
             Some(vec![])
         }
-        KeyCode::Char('x') => {
+        KeyCode::Char('d') => {
             if let Some(active_idx) = model.active_session_index
                 && active_idx < model.sessions.len()
             {
-                model.sessions.remove(active_idx);
+                let session = &model.sessions[active_idx];
+                let conv_id = session.conversation_id.clone().unwrap_or_default();
+                let title = session.title.clone();
 
-                // Recompute filtered indices after removal.
-                let new_filtered = filtered_session_indices(model);
-                if new_filtered.is_empty() {
-                    model.active_session_index = None;
+                if conv_id.is_empty() {
+                    // Local-only session (never saved to server) — just remove it.
+                    model.sessions.remove(active_idx);
+                    let new_filtered = filtered_session_indices(model);
+                    if new_filtered.is_empty() {
+                        model.active_session_index = None;
+                    } else {
+                        let old_pos = filtered
+                            .iter()
+                            .position(|&fi| fi == active_idx)
+                            .unwrap_or(0);
+                        let new_pos = old_pos.min(new_filtered.len() - 1);
+                        model.active_session_index = Some(new_filtered[new_pos]);
+                        activate_session_agent(model);
+                    }
+                    sync_sessions_list_state(model);
                 } else {
-                    let old_pos = filtered
-                        .iter()
-                        .position(|&fi| fi == active_idx)
-                        .unwrap_or(0);
-                    let new_pos = old_pos.min(new_filtered.len() - 1);
-                    model.active_session_index = Some(new_filtered[new_pos]);
-                    activate_session_agent(model);
+                    model.modal = Some(Modal::ConfirmDeleteConversation(
+                        ConfirmDeleteConversationModal {
+                            conversation_id: conv_id,
+                            conversation_title: title,
+                            deleting: false,
+                        },
+                    ));
                 }
-                sync_sessions_list_state(model);
             }
             Some(vec![])
         }
@@ -921,9 +966,9 @@ fn handle_components_panel_key(
     key: ratatui::crossterm::event::KeyEvent,
 ) -> Option<Vec<Cmd>> {
     const TAB_ORDER: [ComponentsTab; 3] = [
-        ComponentsTab::Plugins,
-        ComponentsTab::Skills,
         ComponentsTab::Tools,
+        ComponentsTab::Skills,
+        ComponentsTab::Plugins,
     ];
 
     match key.code {
@@ -1075,6 +1120,21 @@ fn update_modal_key(model: &mut Model, key: ratatui::crossterm::event::KeyEvent)
                 state.deleting = true;
                 return vec![Cmd::DeleteAgent {
                     id: state.agent_id.clone(),
+                }];
+            }
+            vec![]
+        }
+        Modal::ConfirmDeleteConversation(state) => {
+            if key.code == KeyCode::Esc
+                || matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N'))
+            {
+                model.modal = None;
+                return vec![];
+            }
+            if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) && !state.deleting {
+                state.deleting = true;
+                return vec![Cmd::DeleteConversation {
+                    id: state.conversation_id.clone(),
                 }];
             }
             vec![]

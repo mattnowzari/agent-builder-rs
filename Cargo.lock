@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "agent-builder-tui"
+name = "agent-builder-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",

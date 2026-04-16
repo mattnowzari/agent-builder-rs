@@ -23,6 +23,7 @@ pub enum Cmd {
         enable_elastic_capabilities: bool,
     },
     DeleteAgent { id: String },
+    DeleteConversation { id: String },
     ImportComponentFromFile {
         path: String,
         component_type: ComponentsTab,

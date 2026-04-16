@@ -500,6 +500,24 @@ impl AgentBuilderClient {
         }
         Ok(())
     }
+
+    pub async fn delete_conversation(&self, id: &str) -> Result<()> {
+        let url = self.api_url(&format!("conversations/{id}"));
+        let resp = self
+            .http
+            .delete(url)
+            .timeout(API_TIMEOUT)
+            .send()
+            .await
+            .context("failed to send delete conversation request")?;
+
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("Agent Builder API error {status}: {text}");
+        }
+        Ok(())
+    }
 }
 
 fn normalize_base_url(raw: &str) -> String {

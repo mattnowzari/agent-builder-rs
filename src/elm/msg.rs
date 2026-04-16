@@ -54,6 +54,8 @@ pub enum Msg {
     AgentUpsertFailed { error: String },
     AgentDeleted { name: String },
     AgentDeleteFailed { error: String },
+    ConversationDeleted { conversation_id: String },
+    ConversationDeleteFailed { error: String },
 
     // -- Import from file --
     ToolCreatedFromFile { tool: ToolSummary },

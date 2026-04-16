@@ -18,9 +18,9 @@ pub enum ActivePanel {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ComponentsTab {
     #[default]
-    Plugins,
-    Skills,
     Tools,
+    Skills,
+    Plugins,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +165,7 @@ pub enum Modal {
     Error { title: String, message: String },
     CreateAgent(Box<CreateAgentModal>),
     ConfirmDeleteAgent(ConfirmDeleteAgentModal),
+    ConfirmDeleteConversation(ConfirmDeleteConversationModal),
     Import(Box<ImportModal>),
     InstallPlugin(InstallPluginModal),
     GitHubImport(GitHubImportModal),
@@ -180,6 +181,7 @@ impl std::fmt::Debug for Modal {
             Self::Error { title, .. } => f.debug_struct("Error").field("title", title).finish(),
             Self::CreateAgent(_) => f.debug_tuple("CreateAgent").finish(),
             Self::ConfirmDeleteAgent(s) => f.debug_tuple("ConfirmDeleteAgent").field(s).finish(),
+            Self::ConfirmDeleteConversation(s) => f.debug_tuple("ConfirmDeleteConversation").field(s).finish(),
             Self::Import(_) => f.debug_tuple("Import").finish(),
             Self::InstallPlugin(_) => f.debug_tuple("InstallPlugin").finish(),
             Self::GitHubImport(_) => f.debug_tuple("GitHubImport").finish(),
@@ -229,6 +231,13 @@ pub struct GitHubImportAgentModal {
 pub struct ConfirmDeleteAgentModal {
     pub agent_id: String,
     pub agent_name: String,
+    pub deleting: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfirmDeleteConversationModal {
+    pub conversation_id: String,
+    pub conversation_title: String,
     pub deleting: bool,
 }
 

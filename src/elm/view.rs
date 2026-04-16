@@ -10,7 +10,7 @@ use ratatui::widgets::{
 use super::model::{
     ActivePanel, AgentEditorMode, ChatRole, ComponentsTab, CreateAgentField, CreateAgentModal,
     CreateAgentTab, GitHubImportAgentModal, GitHubImportModal, ImportAgentModal, ImportModal,
-    InstallPluginModal, Modal, Model,
+    InstallPluginModal, Modal, Model, ConfirmDeleteConversationModal,
 };
 
 const BORDER_NORMAL: Color = Color::Gray;
@@ -188,7 +188,7 @@ fn render_chats_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
 
     let chats_block = Block::default()
         .title(title)
-        .title_bottom(" [Enter open] [n new] [x close] [Ctrl+R] ")
+        .title_bottom(" [Enter open] [d delete] [Ctrl+R refresh] ")
         .borders(Borders::ALL)
         .border_style(style);
 
@@ -643,14 +643,14 @@ fn render_components_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
     let content_area = layout[1];
 
     let tabs = Tabs::new(vec![
-        Line::from("◀ Plugins"),
+        Line::from("◀ Tools"),
         Line::from("Skills"),
-        Line::from("Tools ▶"),
+        Line::from("Plugins ▶"),
     ])
     .select(match model.components_tab {
-        ComponentsTab::Plugins => 0,
+        ComponentsTab::Tools => 0,
         ComponentsTab::Skills => 1,
-        ComponentsTab::Tools => 2,
+        ComponentsTab::Plugins => 2,
     })
     .highlight_style(
         Style::default()
@@ -906,6 +906,10 @@ fn render_modal(frame: &mut Frame, modal: &mut Modal) {
             frame.render_widget(widget, rect);
         }
 
+        Modal::ConfirmDeleteConversation(state) => {
+            render_confirm_delete_conversation_modal(frame, state);
+        }
+
         Modal::CreateAgent(state) => {
             render_create_agent_modal(frame, state);
         }
@@ -942,6 +946,28 @@ fn render_simple_modal(frame: &mut Frame, title: &str, message: &str, color: Col
                 .title(format!(" {title} "))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(color)),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(widget, rect);
+}
+
+fn render_confirm_delete_conversation_modal(frame: &mut Frame, state: &ConfirmDeleteConversationModal) {
+    let rect = centered_rect(50, 25, frame.area());
+    frame.render_widget(Clear, rect);
+    let msg = if state.deleting {
+        format!("Deleting \"{}\"...", state.conversation_title)
+    } else {
+        format!(
+            "Delete conversation \"{}\"?\n\nThis will permanently remove it from Kibana.\n\n[y] Yes  [n/Esc] Cancel",
+            state.conversation_title
+        )
+    };
+    let widget = Paragraph::new(msg)
+        .block(
+            Block::default()
+                .title(" Delete Conversation ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Red)),
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, rect);
