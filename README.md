@@ -39,10 +39,8 @@ The interface is split into four panels:
 | `n` | Agents panel | New chat session |
 | `e` | Agents panel | Edit selected agent |
 | `d` | Agents panel | Delete selected agent |
-| `i` | Agents panel | Import agent from YAML |
-| `g` | Agents panel | Import agent from GitHub URL |
-| `i` | Components panel | Import tool/skill from YAML |
-| `g` | Components panel | Import tool/skill from GitHub URL |
+| `i` | Agents panel | Import agent (from disk or URL) |
+| `i` | Components panel | Import tool/skill/plugin (from disk or URL) |
 | `Left` / `Right` | Components panel | Switch Components tab |
 | `Ctrl+R` | Any panel | Refresh current panel |
 | `Ctrl+C` | Global | Quit |
@@ -100,11 +98,11 @@ If `KIBANA_URL` or `API_KEY` are missing, the TUI will show a modal telling you 
 
 ## Importing Components
 
-Tools, skills, and agents can be imported from local YAML files or directly from GitHub. Press `i` for local file import or `g` for GitHub import.
+Tools, skills, and agents can be imported from local YAML files or directly from a URL. Press `i` to open the import dialog, then choose **From Disk** or **From URL**.
 
-**Tools and Skills** — use `i` / `g` in the **Components** panel (switch to the Tools or Skills tab first).
+**Tools and Skills** — use `i` in the **Components** panel (switch to the Tools or Skills tab first).
 
-**Agents** — use `i` / `g` in the **Agents** panel. An agent YAML folder contains a definition file plus a markdown instructions file (same pattern as skills).
+**Agents** — use `i` in the **Agents** panel. An agent YAML folder contains a definition file plus a markdown instructions file (same pattern as skills).
 
 ```yaml
 # agents/my-agent/my-agent.yaml

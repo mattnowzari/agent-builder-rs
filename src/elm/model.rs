@@ -25,6 +25,12 @@ pub enum ComponentsTab {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportTarget {
+    Agent,
+    Component(ComponentsTab),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatRole {
     User,
     Assistant,
@@ -171,11 +177,10 @@ pub enum Modal {
     CreateAgent(Box<CreateAgentModal>),
     ConfirmDeleteAgent(ConfirmDeleteAgentModal),
     ConfirmDeleteConversation(ConfirmDeleteConversationModal),
+    ImportChooser(ImportChooserModal),
     Import(Box<ImportModal>),
     InstallPlugin(InstallPluginModal),
     GitHubImport(GitHubImportModal),
-    ImportAgent(Box<ImportAgentModal>),
-    GitHubImportAgent(GitHubImportAgentModal),
 }
 
 impl std::fmt::Debug for Modal {
@@ -187,18 +192,23 @@ impl std::fmt::Debug for Modal {
             Self::CreateAgent(_) => f.debug_tuple("CreateAgent").finish(),
             Self::ConfirmDeleteAgent(s) => f.debug_tuple("ConfirmDeleteAgent").field(s).finish(),
             Self::ConfirmDeleteConversation(s) => f.debug_tuple("ConfirmDeleteConversation").field(s).finish(),
+            Self::ImportChooser(s) => f.debug_tuple("ImportChooser").field(s).finish(),
             Self::Import(_) => f.debug_tuple("Import").finish(),
             Self::InstallPlugin(_) => f.debug_tuple("InstallPlugin").finish(),
             Self::GitHubImport(_) => f.debug_tuple("GitHubImport").finish(),
-            Self::ImportAgent(_) => f.debug_tuple("ImportAgent").finish(),
-            Self::GitHubImportAgent(_) => f.debug_tuple("GitHubImportAgent").finish(),
         }
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ImportChooserModal {
+    pub target: ImportTarget,
+    pub selected: usize,
+}
+
 pub struct ImportModal {
     pub file_explorer: FileExplorer,
-    pub component_type: ComponentsTab,
+    pub target: ImportTarget,
     pub error_message: Option<String>,
 }
 
@@ -214,20 +224,7 @@ pub struct InstallPluginModal {
 pub struct GitHubImportModal {
     pub url_buffer: String,
     pub cursor: usize,
-    pub component_type: ComponentsTab,
-    pub error_message: Option<String>,
-    pub importing: bool,
-}
-
-pub struct ImportAgentModal {
-    pub file_explorer: FileExplorer,
-    pub error_message: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct GitHubImportAgentModal {
-    pub url_buffer: String,
-    pub cursor: usize,
+    pub target: ImportTarget,
     pub error_message: Option<String>,
     pub importing: bool,
 }

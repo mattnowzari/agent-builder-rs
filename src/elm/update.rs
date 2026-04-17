@@ -11,11 +11,32 @@ use super::cmd::Cmd;
 use super::model::{
     ActivePanel, AgentEditorMode, ChatEntry, ChatRole, ChatSession, ComponentsTab,
     ConfirmDeleteAgentModal, ConfirmDeleteConversationModal, CreateAgentField, CreateAgentModal, CreateAgentTab,
-    GitHubImportAgentModal, GitHubImportModal, ImportAgentModal, ImportModal, InstallPluginModal,
-    Modal, Model,
+    GitHubImportModal, ImportChooserModal, ImportModal,
+    ImportTarget, InstallPluginModal, Modal, Model,
 };
 use super::msg::Msg;
 use super::view::filtered_session_indices;
+
+fn build_file_explorer_theme(theme: &crate::theme::Theme) -> ExplorerTheme {
+    ExplorerTheme::default()
+        .add_default_title()
+        .with_block(Block::default().borders(Borders::NONE))
+        .with_item_style(Style::default().fg(theme.file_text))
+        .with_dir_style(Style::default().fg(theme.file_dir))
+        .with_highlight_item_style(
+            Style::default()
+                .fg(theme.file_text)
+                .bg(theme.file_highlight_bg)
+                .add_modifier(Modifier::BOLD),
+        )
+        .with_highlight_dir_style(
+            Style::default()
+                .fg(theme.file_dir)
+                .bg(theme.file_highlight_bg)
+                .add_modifier(Modifier::BOLD),
+        )
+        .with_highlight_symbol("▶ ")
+}
 
 pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
     // When a modal is open, keyboard input goes to the modal first.
@@ -263,7 +284,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             }
             if matches!(
                 model.modal,
-                Some(Modal::CreateAgent(_) | Modal::ImportAgent(_) | Modal::GitHubImportAgent(_))
+                Some(Modal::CreateAgent(_) | Modal::Import(_) | Modal::GitHubImport(_))
             ) {
                 model.modal = None;
             }
@@ -287,7 +308,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                     state.submitting = false;
                     state.error = Some(error);
                 }
-                Some(Modal::GitHubImportAgent(_)) | Some(Modal::ImportAgent(_)) => {
+                Some(Modal::GitHubImport(_)) | Some(Modal::Import(_)) => {
                     model.modal = Some(Modal::Error {
                         title: "Agent Import Failed".to_string(),
                         message: error,
@@ -455,14 +476,6 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             }
 
             for conv in conversations {
-                let already_exists = model
-                    .sessions
-                    .iter()
-                    .any(|s| s.conversation_id.as_deref() == Some(&conv.id));
-                if already_exists {
-                    continue;
-                }
-
                 let agent_name = conv
                     .agent_id
                     .as_ref()
@@ -473,6 +486,16 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 let title = conv
                     .title
                     .unwrap_or_else(|| "Untitled chat".to_string());
+
+                if let Some(existing) = model
+                    .sessions
+                    .iter_mut()
+                    .find(|s| s.conversation_id.as_deref() == Some(&conv.id))
+                {
+                    existing.title = title;
+                    existing.agent_name = agent_name;
+                    continue;
+                }
 
                 model.sessions.push(ChatSession {
                     agent_id: conv.agent_id.unwrap_or_default(),
@@ -744,47 +767,9 @@ fn handle_agents_panel_key(
             Some(vec![])
         }
         KeyCode::Char('i') => {
-            let fe_theme = ExplorerTheme::default()
-                .add_default_title()
-                .with_block(Block::default().borders(Borders::NONE))
-                .with_item_style(Style::default().fg(model.theme.file_text))
-                .with_dir_style(Style::default().fg(model.theme.file_dir))
-                .with_highlight_item_style(
-                    Style::default()
-                        .fg(model.theme.file_text)
-                        .bg(model.theme.file_highlight_bg)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .with_highlight_dir_style(
-                    Style::default()
-                        .fg(model.theme.file_dir)
-                        .bg(model.theme.file_highlight_bg)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .with_highlight_symbol("▶ ");
-
-            match FileExplorerBuilder::build_with_theme(fe_theme) {
-                Ok(fe) => {
-                    model.modal = Some(Modal::ImportAgent(Box::new(ImportAgentModal {
-                        file_explorer: fe,
-                        error_message: None,
-                    })));
-                }
-                Err(e) => {
-                    model.modal = Some(Modal::Error {
-                        title: "File Explorer Error".to_string(),
-                        message: format!("{e}"),
-                    });
-                }
-            }
-            Some(vec![])
-        }
-        KeyCode::Char('g') => {
-            model.modal = Some(Modal::GitHubImportAgent(GitHubImportAgentModal {
-                url_buffer: String::new(),
-                cursor: 0,
-                error_message: None,
-                importing: false,
+            model.modal = Some(Modal::ImportChooser(ImportChooserModal {
+                target: ImportTarget::Agent,
+                selected: 0,
             }));
             Some(vec![])
         }
@@ -1016,68 +1001,10 @@ fn handle_components_panel_key(
             Some(vec![Cmd::LoadComponentsData])
         }
         KeyCode::Char('i') => {
-            if model.components_tab == ComponentsTab::Plugins {
-                model.modal = Some(Modal::InstallPlugin(InstallPluginModal {
-                    url_buffer: String::new(),
-                    cursor: 0,
-                    error_message: None,
-                    installing: false,
-                }));
-            } else {
-                let fe_theme = ExplorerTheme::default()
-                    .add_default_title()
-                    .with_block(Block::default().borders(Borders::NONE))
-                    .with_item_style(Style::default().fg(model.theme.file_text))
-                    .with_dir_style(Style::default().fg(model.theme.file_dir))
-                    .with_highlight_item_style(
-                        Style::default()
-                            .fg(model.theme.file_text)
-                            .bg(model.theme.file_highlight_bg)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                    .with_highlight_dir_style(
-                        Style::default()
-                            .fg(model.theme.file_dir)
-                            .bg(model.theme.file_highlight_bg)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                    .with_highlight_symbol("▶ ");
-
-                match FileExplorerBuilder::build_with_theme(fe_theme) {
-                    Ok(fe) => {
-                        model.modal = Some(Modal::Import(Box::new(ImportModal {
-                            file_explorer: fe,
-                            component_type: model.components_tab,
-                            error_message: None,
-                        })));
-                    }
-                    Err(e) => {
-                        model.modal = Some(Modal::Error {
-                            title: "Import Error".to_string(),
-                            message: format!("Failed to open file explorer: {e}"),
-                        });
-                    }
-                }
-            }
-            Some(vec![])
-        }
-        KeyCode::Char('g') => {
-            if model.components_tab == ComponentsTab::Plugins {
-                model.modal = Some(Modal::InstallPlugin(InstallPluginModal {
-                    url_buffer: String::new(),
-                    cursor: 0,
-                    error_message: None,
-                    installing: false,
-                }));
-            } else {
-                model.modal = Some(Modal::GitHubImport(GitHubImportModal {
-                    url_buffer: String::new(),
-                    cursor: 0,
-                    component_type: model.components_tab,
-                    error_message: None,
-                    importing: false,
-                }));
-            }
+            model.modal = Some(Modal::ImportChooser(ImportChooserModal {
+                target: ImportTarget::Component(model.components_tab),
+                selected: 0,
+            }));
             Some(vec![])
         }
         _ => None,
@@ -1161,6 +1088,68 @@ fn update_modal_key(model: &mut Model, key: ratatui::crossterm::event::KeyEvent)
             vec![]
         }
 
+        Modal::ImportChooser(state) => {
+            if key.code == KeyCode::Esc {
+                model.modal = None;
+                return vec![];
+            }
+
+            let is_plugin = state.target == ImportTarget::Component(ComponentsTab::Plugins);
+            let option_count: usize = if is_plugin { 1 } else { 2 };
+
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    state.selected = state.selected.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    state.selected = (state.selected + 1).min(option_count - 1);
+                }
+                KeyCode::Enter => {
+                    let target = state.target;
+                    if is_plugin || state.selected == 1 {
+                        // From URL
+                        if target == ImportTarget::Component(ComponentsTab::Plugins) {
+                            model.modal = Some(Modal::InstallPlugin(InstallPluginModal {
+                                url_buffer: String::new(),
+                                cursor: 0,
+                                error_message: None,
+                                installing: false,
+                            }));
+                        } else {
+                            model.modal = Some(Modal::GitHubImport(GitHubImportModal {
+                                url_buffer: String::new(),
+                                cursor: 0,
+                                target,
+                                error_message: None,
+                                importing: false,
+                            }));
+                        }
+                    } else {
+                        // From Disk
+                        let fe_theme = build_file_explorer_theme(&model.theme);
+                        match FileExplorerBuilder::build_with_theme(fe_theme) {
+                            Ok(fe) => {
+                                model.modal = Some(Modal::Import(Box::new(ImportModal {
+                                    file_explorer: fe,
+                                    target,
+                                    error_message: None,
+                                })));
+                            }
+                            Err(e) => {
+                                model.modal = Some(Modal::Error {
+                                    title: "File Explorer Error".to_string(),
+                                    message: format!("{e}"),
+                                });
+                            }
+                        }
+                    }
+                    return vec![];
+                }
+                _ => {}
+            }
+            vec![]
+        }
+
         Modal::Import(state) => {
             if key.code == KeyCode::Esc {
                 model.modal = None;
@@ -1177,12 +1166,19 @@ fn update_modal_key(model: &mut Model, key: ratatui::crossterm::event::KeyEvent)
                         .unwrap_or("");
                     if ext == "yaml" || ext == "yml" {
                         let path_str = path.to_string_lossy().to_string();
-                        let component_type = state.component_type;
+                        let target = state.target;
                         model.modal = None;
-                        return vec![Cmd::ImportComponentFromFile {
-                            path: path_str,
-                            component_type,
-                        }];
+                        return match target {
+                            ImportTarget::Agent => {
+                                vec![Cmd::ImportAgentFromFile { path: path_str }]
+                            }
+                            ImportTarget::Component(component_type) => {
+                                vec![Cmd::ImportComponentFromFile {
+                                    path: path_str,
+                                    component_type,
+                                }]
+                            }
+                        };
                     } else {
                         state.error_message =
                             Some("Only .yaml/.yml files are allowed.".to_string());
@@ -1300,125 +1296,14 @@ fn update_modal_key(model: &mut Model, key: ratatui::crossterm::event::KeyEvent)
                     } else {
                         state.importing = true;
                         state.error_message = None;
-                        let component_type = state.component_type;
-                        return vec![Cmd::ImportComponentFromGitHub { url, component_type }];
-                    }
-                    vec![]
-                }
-                KeyCode::Char(c) => {
-                    state.url_buffer.insert(state.cursor, c);
-                    state.cursor += c.len_utf8();
-                    state.error_message = None;
-                    vec![]
-                }
-                KeyCode::Backspace => {
-                    if state.cursor > 0 {
-                        let prev = state.url_buffer[..state.cursor]
-                            .chars()
-                            .last()
-                            .map(|c| c.len_utf8())
-                            .unwrap_or(0);
-                        state.cursor -= prev;
-                        state.url_buffer.remove(state.cursor);
-                    }
-                    state.error_message = None;
-                    vec![]
-                }
-                KeyCode::Delete => {
-                    if state.cursor < state.url_buffer.len() {
-                        state.url_buffer.remove(state.cursor);
-                    }
-                    vec![]
-                }
-                KeyCode::Left => {
-                    if state.cursor > 0 {
-                        let prev = state.url_buffer[..state.cursor]
-                            .chars()
-                            .last()
-                            .map(|c| c.len_utf8())
-                            .unwrap_or(0);
-                        state.cursor -= prev;
-                    }
-                    vec![]
-                }
-                KeyCode::Right => {
-                    if state.cursor < state.url_buffer.len() {
-                        let next = state.url_buffer[state.cursor..]
-                            .chars()
-                            .next()
-                            .map(|c| c.len_utf8())
-                            .unwrap_or(0);
-                        state.cursor += next;
-                    }
-                    vec![]
-                }
-                KeyCode::Home => {
-                    state.cursor = 0;
-                    vec![]
-                }
-                KeyCode::End => {
-                    state.cursor = state.url_buffer.len();
-                    vec![]
-                }
-                _ => vec![],
-            }
-        }
-
-        Modal::ImportAgent(state) => {
-            if key.code == KeyCode::Esc {
-                model.modal = None;
-                return vec![];
-            }
-
-            if key.code == KeyCode::Enter {
-                let selected = state.file_explorer.current().clone();
-                if selected.is_file() {
-                    let path = &selected.path;
-                    let ext = path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("");
-                    if ext == "yaml" || ext == "yml" {
-                        let path_str = path.to_string_lossy().to_string();
-                        model.modal = None;
-                        return vec![Cmd::ImportAgentFromFile { path: path_str }];
-                    } else {
-                        state.error_message =
-                            Some("Only .yaml/.yml files are allowed.".to_string());
-                        return vec![];
-                    }
-                }
-            }
-
-            if matches!(key.code, KeyCode::Left | KeyCode::Right) {
-                return vec![];
-            }
-
-            state.error_message = None;
-            let event = ratatui::crossterm::event::Event::Key(key);
-            let _ = state.file_explorer.handle(&event);
-            vec![]
-        }
-
-        Modal::GitHubImportAgent(state) => {
-            if key.code == KeyCode::Esc {
-                model.modal = None;
-                return vec![];
-            }
-
-            if state.importing {
-                return vec![];
-            }
-
-            match key.code {
-                KeyCode::Enter => {
-                    let url = state.url_buffer.trim().to_string();
-                    if url.is_empty() {
-                        state.error_message = Some("URL is required.".to_string());
-                    } else {
-                        state.importing = true;
-                        state.error_message = None;
-                        return vec![Cmd::ImportAgentFromGitHub { url }];
+                        return match state.target {
+                            ImportTarget::Agent => {
+                                vec![Cmd::ImportAgentFromGitHub { url }]
+                            }
+                            ImportTarget::Component(component_type) => {
+                                vec![Cmd::ImportComponentFromGitHub { url, component_type }]
+                            }
+                        };
                     }
                     vec![]
                 }
