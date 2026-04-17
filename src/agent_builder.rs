@@ -6,6 +6,27 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 
+#[derive(Debug)]
+pub enum DeleteComponentError {
+    InUseByAgents { agent_names: Vec<String> },
+    ReadOnly,
+    Other(String),
+}
+
+impl std::fmt::Display for DeleteComponentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InUseByAgents { agent_names } => {
+                write!(f, "In use by agents: {}", agent_names.join(", "))
+            }
+            Self::ReadOnly => write!(f, "Cannot delete a built-in component"),
+            Self::Other(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
+impl std::error::Error for DeleteComponentError {}
+
 #[derive(Debug, Clone)]
 pub struct ConversationSummary {
     pub id: String,
@@ -531,6 +552,70 @@ impl AgentBuilderClient {
         }
         Ok(())
     }
+
+    pub async fn delete_tool(&self, id: &str, force: bool) -> Result<(), DeleteComponentError> {
+        self.delete_component("tools", id, force).await
+    }
+
+    pub async fn delete_skill(&self, id: &str, force: bool) -> Result<(), DeleteComponentError> {
+        self.delete_component("skills", id, force).await
+    }
+
+    pub async fn delete_plugin(&self, id: &str, force: bool) -> Result<(), DeleteComponentError> {
+        self.delete_component("plugins", id, force).await
+    }
+
+    async fn delete_component(
+        &self,
+        kind: &str,
+        id: &str,
+        force: bool,
+    ) -> Result<(), DeleteComponentError> {
+        let url = format!("{}?force={force}", self.api_url(&format!("{kind}/{id}")));
+        let resp = self
+            .http
+            .delete(url)
+            .timeout(API_TIMEOUT)
+            .send()
+            .await
+            .map_err(|e| DeleteComponentError::Other(format!("request failed: {e}")))?;
+
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+
+        if status.is_success() {
+            return Ok(());
+        }
+
+        if status.as_u16() == 400 {
+            return Err(DeleteComponentError::ReadOnly);
+        }
+
+        if status.as_u16() == 409 {
+            let agent_names = parse_in_use_agent_names(&text);
+            return Err(DeleteComponentError::InUseByAgents { agent_names });
+        }
+
+        Err(DeleteComponentError::Other(format!(
+            "API error {status}: {text}"
+        )))
+    }
+}
+
+fn parse_in_use_agent_names(body: &str) -> Vec<String> {
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(agents) = val
+            .get("attributes")
+            .and_then(|a| a.get("agents"))
+            .and_then(|a| a.as_array())
+        {
+            return agents
+                .iter()
+                .filter_map(|a| a.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect();
+        }
+    }
+    vec![]
 }
 
 fn normalize_base_url(raw: &str) -> String {

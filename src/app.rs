@@ -798,5 +798,38 @@ fn execute_cmd(
                 let _ = tx.send(Msg::AgentDeleted { name: agent_name });
             });
         }
+
+        Cmd::DeleteComponent { id, component_type, force } => {
+            use crate::elm::ComponentsTab;
+            let component_name = match component_type {
+                ComponentsTab::Tools => model.components_tools.iter().find(|t| t.id == id).map(|t| t.id.clone()),
+                ComponentsTab::Skills => model.components_skills.iter().find(|s| s.id == id).map(|s| s.name.clone()),
+                ComponentsTab::Plugins => model.components_plugins.iter().find(|p| p.id == id).map(|p| p.name.clone()),
+            }.unwrap_or_else(|| id.clone());
+
+            spawn_api(rt, model.config.clone(), tx, |e| Msg::ComponentDeleteFailed { error: e }, move |client, tx| async move {
+                let result = match component_type {
+                    ComponentsTab::Tools => client.delete_tool(&id, force).await,
+                    ComponentsTab::Skills => client.delete_skill(&id, force).await,
+                    ComponentsTab::Plugins => client.delete_plugin(&id, force).await,
+                };
+                match result {
+                    Ok(()) => {
+                        let _ = tx.send(Msg::ComponentDeleted { name: component_name, component_type });
+                    }
+                    Err(crate::agent_builder::DeleteComponentError::InUseByAgents { agent_names }) => {
+                        let _ = tx.send(Msg::ComponentDeleteInUse {
+                            component_id: id,
+                            component_name,
+                            component_type,
+                            agent_names,
+                        });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Msg::ComponentDeleteFailed { error: format!("{e}") });
+                    }
+                }
+            });
+        }
     }
 }

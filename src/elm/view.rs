@@ -8,8 +8,8 @@ use ratatui::widgets::{
 };
 
 use super::model::{
-    ActivePanel, AgentEditorMode, ChatRole, ComponentsTab, CreateAgentField, CreateAgentModal,
-    CreateAgentTab, GitHubImportModal, ImportChooserModal,
+    ActivePanel, AgentEditorMode, ChatRole, ComponentsTab, ConfirmDeleteComponentModal,
+    CreateAgentField, CreateAgentModal, CreateAgentTab, GitHubImportModal, ImportChooserModal,
     ImportModal, ImportTarget, InstallPluginModal, Modal, Model, ConfirmDeleteConversationModal,
 };
 use crate::theme::Theme;
@@ -962,7 +962,7 @@ fn render_components_panel(frame: &mut Frame, model: &mut Model, area: Rect) {
 
     let outer_block = Block::default()
         .title(" Components [◀-▶ switch tab] ")
-        .title_bottom(" [i import] [Ctrl+R refresh] ")
+        .title_bottom(" [i import] [d del] [Ctrl+R refresh] ")
         .borders(Borders::ALL)
         .border_style(style);
 
@@ -1271,6 +1271,10 @@ fn render_modal(frame: &mut Frame, modal: &mut Modal, theme: &Theme) {
         Modal::GitHubImport(state) => {
             render_github_import_modal(frame, state, theme);
         }
+
+        Modal::ConfirmDeleteComponent(state) => {
+            render_confirm_delete_component_modal(frame, state, theme);
+        }
     }
 }
 
@@ -1369,6 +1373,55 @@ fn render_confirm_delete_conversation_modal(frame: &mut Frame, state: &ConfirmDe
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, rect);
+}
+
+fn render_confirm_delete_component_modal(frame: &mut Frame, state: &ConfirmDeleteComponentModal, theme: &Theme) {
+    let rect = centered_rect(55, 30, frame.area());
+    frame.render_widget(Clear, rect);
+
+    let type_label = match state.component_tab {
+        ComponentsTab::Tools => "tool",
+        ComponentsTab::Skills => "skill",
+        ComponentsTab::Plugins => "plugin",
+    };
+
+    let msg = if state.deleting {
+        format!("Deleting \"{}\"...", state.component_name)
+    } else if let Some(agents) = &state.in_use_by {
+        let agent_list = agents.join(", ");
+        format!(
+            "This {type_label} is in use by: {agent_list}\n\nDelete anyway? This will remove it from those agents.\n\n[y] Yes  [n/Esc] Cancel"
+        )
+    } else {
+        format!(
+            "Delete {type_label} \"{}\"?\n\nNote: this {type_label} may be in use by one or more agents.\n\n[y] Yes  [n/Esc] Cancel",
+            state.component_name
+        )
+    };
+
+    let title = if state.in_use_by.is_some() {
+        format!(" {type_label} In Use ")
+    } else {
+        format!(" Delete {} ", capitalize(type_label))
+    };
+
+    let widget = Paragraph::new(msg)
+        .block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.text_error)),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(widget, rect);
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 fn render_import_modal(frame: &mut Frame, state: &ImportModal, theme: &Theme) {

@@ -181,6 +181,7 @@ pub enum Modal {
     Import(Box<ImportModal>),
     InstallPlugin(InstallPluginModal),
     GitHubImport(GitHubImportModal),
+    ConfirmDeleteComponent(ConfirmDeleteComponentModal),
 }
 
 impl std::fmt::Debug for Modal {
@@ -196,6 +197,7 @@ impl std::fmt::Debug for Modal {
             Self::Import(_) => f.debug_tuple("Import").finish(),
             Self::InstallPlugin(_) => f.debug_tuple("InstallPlugin").finish(),
             Self::GitHubImport(_) => f.debug_tuple("GitHubImport").finish(),
+            Self::ConfirmDeleteComponent(s) => f.debug_tuple("ConfirmDeleteComponent").field(s).finish(),
         }
     }
 }
@@ -241,6 +243,16 @@ pub struct ConfirmDeleteConversationModal {
     pub conversation_id: String,
     pub conversation_title: String,
     pub deleting: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfirmDeleteComponentModal {
+    pub component_id: String,
+    pub component_name: String,
+    pub component_tab: ComponentsTab,
+    pub deleting: bool,
+    /// None initially; Some(agent_names) after a 409 "in use" response.
+    pub in_use_by: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]

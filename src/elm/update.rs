@@ -10,7 +10,8 @@ use ratatui_explorer::{FileExplorerBuilder, Theme as ExplorerTheme};
 use super::cmd::Cmd;
 use super::model::{
     ActivePanel, AgentEditorMode, ChatEntry, ChatRole, ChatSession, ComponentsTab,
-    ConfirmDeleteAgentModal, ConfirmDeleteConversationModal, CreateAgentField, CreateAgentModal, CreateAgentTab,
+    ConfirmDeleteAgentModal, ConfirmDeleteComponentModal, ConfirmDeleteConversationModal,
+    CreateAgentField, CreateAgentModal, CreateAgentTab,
     GitHubImportModal, ImportChooserModal, ImportModal,
     ImportTarget, InstallPluginModal, Modal, Model,
 };
@@ -377,6 +378,48 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         Msg::ConversationDeleteFailed { error } => {
             model.modal = Some(Modal::Error {
                 title: "Delete failed".to_string(),
+                message: error,
+            });
+            vec![]
+        }
+
+        // -- Component delete --
+        Msg::ComponentDeleted { name, component_type } => {
+            let type_label = match component_type {
+                ComponentsTab::Tools => "Tool",
+                ComponentsTab::Skills => "Skill",
+                ComponentsTab::Plugins => "Plugin",
+            };
+            model.modal = Some(Modal::Info {
+                title: format!("{type_label} Deleted"),
+                message: format!("Successfully deleted {}: {name}", type_label.to_lowercase()),
+            });
+            model.components_tools_loading = true;
+            model.components_skills_loading = true;
+            model.components_plugins_loading = true;
+            model.components_generation += 1;
+            vec![Cmd::LoadComponentsData]
+        }
+
+        Msg::ComponentDeleteInUse {
+            component_id,
+            component_name,
+            component_type,
+            agent_names,
+        } => {
+            model.modal = Some(Modal::ConfirmDeleteComponent(ConfirmDeleteComponentModal {
+                component_id,
+                component_name,
+                component_tab: component_type,
+                deleting: false,
+                in_use_by: Some(agent_names),
+            }));
+            vec![]
+        }
+
+        Msg::ComponentDeleteFailed { error } => {
+            model.modal = Some(Modal::Error {
+                title: "Delete Failed".to_string(),
                 message: error,
             });
             vec![]
@@ -1007,6 +1050,42 @@ fn handle_components_panel_key(
             }));
             Some(vec![])
         }
+        KeyCode::Char('d') => {
+            let len = components_list_len(model);
+            if len == 0 {
+                return Some(vec![]);
+            }
+            let idx = model.components_selected_index.min(len - 1);
+            let (id, name, readonly) = match model.components_tab {
+                ComponentsTab::Tools => {
+                    let t = &model.components_tools[idx];
+                    (t.id.clone(), t.id.clone(), t.readonly)
+                }
+                ComponentsTab::Skills => {
+                    let s = &model.components_skills[idx];
+                    (s.id.clone(), s.name.clone(), s.readonly)
+                }
+                ComponentsTab::Plugins => {
+                    let p = &model.components_plugins[idx];
+                    (p.id.clone(), p.name.clone(), p.readonly)
+                }
+            };
+            if readonly {
+                model.modal = Some(Modal::Info {
+                    title: "Cannot Delete".to_string(),
+                    message: "Built-in components cannot be deleted.".to_string(),
+                });
+            } else {
+                model.modal = Some(Modal::ConfirmDeleteComponent(ConfirmDeleteComponentModal {
+                    component_id: id,
+                    component_name: name,
+                    component_tab: model.components_tab,
+                    deleting: false,
+                    in_use_by: None,
+                }));
+            }
+            Some(vec![])
+        }
         _ => None,
     }
 }
@@ -1364,6 +1443,25 @@ fn update_modal_key(model: &mut Model, key: ratatui::crossterm::event::KeyEvent)
                 }
                 _ => vec![],
             }
+        }
+
+        Modal::ConfirmDeleteComponent(state) => {
+            if key.code == KeyCode::Esc
+                || matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N'))
+            {
+                model.modal = None;
+                return vec![];
+            }
+            if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) && !state.deleting {
+                state.deleting = true;
+                let force = state.in_use_by.is_some();
+                return vec![Cmd::DeleteComponent {
+                    id: state.component_id.clone(),
+                    component_type: state.component_tab,
+                    force,
+                }];
+            }
+            vec![]
         }
     }
 }

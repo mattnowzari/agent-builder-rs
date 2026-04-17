@@ -24,6 +24,11 @@ pub enum Cmd {
     },
     DeleteAgent { id: String },
     DeleteConversation { id: String },
+    DeleteComponent {
+        id: String,
+        component_type: ComponentsTab,
+        force: bool,
+    },
     ImportComponentFromFile {
         path: String,
         component_type: ComponentsTab,

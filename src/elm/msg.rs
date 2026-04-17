@@ -2,6 +2,7 @@ use ratatui::crossterm::event::{KeyEvent, MouseEvent};
 
 use crate::agent_builder::{AgentSummary, ConversationSummary, PluginSummary, SkillSummary, ToolStep, ToolSummary};
 use crate::config::Config;
+use super::model::ComponentsTab;
 
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -56,6 +57,11 @@ pub enum Msg {
     AgentDeleteFailed { error: String },
     ConversationDeleted { conversation_id: String },
     ConversationDeleteFailed { error: String },
+
+    // -- Component delete --
+    ComponentDeleted { name: String, component_type: ComponentsTab },
+    ComponentDeleteInUse { component_id: String, component_name: String, component_type: ComponentsTab, agent_names: Vec<String> },
+    ComponentDeleteFailed { error: String },
 
     // -- Import from file --
     ToolCreatedFromFile { tool: ToolSummary },
