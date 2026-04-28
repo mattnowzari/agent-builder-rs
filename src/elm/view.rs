@@ -1,4 +1,5 @@
 use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -536,11 +537,11 @@ fn cursor_row_in_area(s: &str, byte_cursor: usize, width: u16) -> u16 {
 
 fn truncate_title(title: &str, max_chars: usize) -> String {
     let trimmed = title.trim();
-    if trimmed.chars().count() <= max_chars {
+    if UnicodeWidthStr::width(trimmed) <= max_chars {
         trimmed.to_string()
     } else {
-        let truncated: String = trimmed.chars().take(max_chars).collect();
-        format!("{truncated}...")
+        let end = split_at_width(trimmed, max_chars);
+        format!("{}...", &trimmed[..end])
     }
 }
 
@@ -615,10 +616,10 @@ fn thought_process_lines(steps: &[ToolStep], width: u16, theme: &Theme) -> Vec<L
 }
 
 fn truncate_str(s: &str, max_chars: usize) -> String {
-    if max_chars < 4 || s.chars().count() <= max_chars {
+    if max_chars < 4 || UnicodeWidthStr::width(s) <= max_chars {
         return s.to_string();
     }
-    let end = s.char_indices().nth(max_chars - 1).map(|(i, _)| i).unwrap_or(s.len());
+    let end = split_at_width(s, max_chars - 1); // leave one column for '…'
     format!("{}…", &s[..end])
 }
 
@@ -659,7 +660,7 @@ fn bubble_lines(
         wrapped.push(String::new());
     }
 
-    let longest = wrapped.iter().map(|s| s.chars().count()).max().unwrap_or(1);
+    let longest = wrapped.iter().map(|s| UnicodeWidthStr::width(s.as_str())).max().unwrap_or(1);
     let inner_w = longest.clamp(1, max_inner_w);
     let bubble_w = inner_w + 2;
 
@@ -680,7 +681,7 @@ fn bubble_lines(
     ]));
 
     for line in wrapped {
-        let w = line.chars().count();
+        let w = UnicodeWidthStr::width(line.as_str());
         let mut body = line;
         if w < inner_w {
             body.push_str(&" ".repeat(inner_w - w));
@@ -783,8 +784,8 @@ fn strip_heading_prefix(line: Line<'static>) -> Line<'static> {
 }
 
 /// Render markdown content inside a left-aligned chat bubble.
-/// Uses `tui_markdown` to parse MD into styled lines, then wraps them into
-/// the bubble border frame.
+/// Uses `tui_markdown` for standard markdown and a custom table renderer for
+/// GFM tables (which tui_markdown does not support).
 fn markdown_bubble_lines(
     content: &str,
     width: u16,
@@ -807,18 +808,8 @@ fn markdown_bubble_lines(
         text_primary: theme.text_primary,
     };
     let options = tui_markdown::Options::new(style_sheet);
-    let md_text = tui_markdown::from_str_with_options(content, &options);
 
-    let mut wrapped_lines: Vec<Line<'static>> = Vec::new();
-    for line in md_text.lines {
-        let cleaned = strip_heading_prefix(line_to_owned(line));
-        let char_count = line_char_width(&cleaned);
-        if char_count <= max_inner_w {
-            wrapped_lines.push(cleaned);
-        } else {
-            wrapped_lines.extend(wrap_styled_line(cleaned, max_inner_w));
-        }
-    }
+    let mut wrapped_lines = render_markdown_lines(content, max_inner_w, &options, theme);
 
     if wrapped_lines.is_empty() {
         wrapped_lines.push(Line::from(""));
@@ -833,7 +824,7 @@ fn markdown_bubble_lines(
     let bubble_w = inner_w + 2;
 
     let left_pad = margin;
-    let _ = bubble_w; // used implicitly via inner_w
+    let _ = bubble_w;
     let pad = " ".repeat(left_pad);
 
     let mut out: Vec<Line<'static>> = Vec::new();
@@ -878,6 +869,313 @@ fn markdown_bubble_lines(
     out
 }
 
+/// Table-aware markdown renderer.
+///
+/// Uses pulldown-cmark with ENABLE_TABLES to locate GFM tables by byte range,
+/// renders them as Unicode box-drawing art, and delegates non-table sections to
+/// tui-markdown (which does not support tables itself).
+fn render_markdown_lines(
+    content: &str,
+    max_inner_w: usize,
+    options: &tui_markdown::Options<ThemeStyleSheet>,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    use pulldown_cmark::{Alignment, Event, Options as CmarkOptions, Parser, Tag, TagEnd};
+
+    struct TableData {
+        range: std::ops::Range<usize>,
+        alignments: Vec<Alignment>,
+        header: Vec<String>,
+        rows: Vec<Vec<String>>,
+    }
+
+    let mut cmark_opts = CmarkOptions::empty();
+    cmark_opts.insert(CmarkOptions::ENABLE_TABLES);
+
+    let mut tables: Vec<TableData> = Vec::new();
+    let mut in_table = false;
+    let mut table_start = 0usize;
+    let mut current_alignments: Vec<Alignment> = Vec::new();
+    let mut current_header: Vec<String> = Vec::new();
+    let mut current_rows: Vec<Vec<String>> = Vec::new();
+    let mut current_row: Vec<String> = Vec::new();
+    let mut current_cell = String::new();
+    let mut in_header = false;
+
+    for (event, range) in Parser::new_ext(content, cmark_opts).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Table(aligns)) => {
+                in_table = true;
+                table_start = range.start;
+                current_alignments = aligns;
+                current_header.clear();
+                current_rows.clear();
+            }
+            Event::End(TagEnd::Table) => {
+                if in_table {
+                    tables.push(TableData {
+                        range: table_start..range.end,
+                        alignments: current_alignments.clone(),
+                        header: current_header.clone(),
+                        rows: current_rows.clone(),
+                    });
+                }
+                in_table = false;
+            }
+            Event::Start(Tag::TableHead) => {
+                in_header = true;
+            }
+            Event::End(TagEnd::TableHead) => {
+                in_header = false;
+            }
+            Event::Start(Tag::TableRow) => {
+                current_row.clear();
+            }
+            Event::End(TagEnd::TableRow) => {
+                if in_table && !in_header {
+                    current_rows.push(std::mem::take(&mut current_row));
+                }
+            }
+            Event::Start(Tag::TableCell) => {
+                current_cell.clear();
+            }
+            Event::End(TagEnd::TableCell) => {
+                let cell = std::mem::take(&mut current_cell).trim().to_string();
+                if in_table {
+                    if in_header {
+                        current_header.push(cell);
+                    } else {
+                        current_row.push(cell);
+                    }
+                }
+            }
+            Event::Text(text) if in_table => {
+                current_cell.push_str(&text);
+            }
+            Event::Code(code) if in_table => {
+                current_cell.push('`');
+                current_cell.push_str(&code);
+                current_cell.push('`');
+            }
+            Event::SoftBreak | Event::HardBreak if in_table => {
+                current_cell.push(' ');
+            }
+            _ => {}
+        }
+    }
+
+    // Run tui-markdown on a non-table chunk and return wrapped lines.
+    let process_chunk = |chunk: &str| -> Vec<Line<'static>> {
+        tui_markdown::from_str_with_options(chunk, options)
+            .lines
+            .into_iter()
+            .flat_map(|line| {
+                let cleaned = strip_heading_prefix(line_to_owned(line));
+                let w = line_char_width(&cleaned);
+                if w <= max_inner_w {
+                    vec![cleaned]
+                } else {
+                    wrap_styled_line(cleaned, max_inner_w)
+                }
+            })
+            .collect()
+    };
+
+    if tables.is_empty() {
+        return process_chunk(content);
+    }
+
+    let mut all_lines: Vec<Line<'static>> = Vec::new();
+    let mut prev_end = 0usize;
+
+    for table in &tables {
+        // Non-table content before this table.
+        if prev_end < table.range.start {
+            let chunk = content[prev_end..table.range.start].trim_matches('\n');
+            if !chunk.is_empty() {
+                all_lines.extend(process_chunk(chunk));
+                all_lines.push(Line::from(""));
+            }
+        }
+
+        all_lines.extend(render_table_art_lines(
+            &table.alignments,
+            &table.header,
+            &table.rows,
+            max_inner_w,
+            theme,
+        ));
+
+        prev_end = table.range.end;
+    }
+
+    // Non-table content after the last table.
+    if prev_end < content.len() {
+        let chunk = content[prev_end..].trim_matches('\n');
+        if !chunk.is_empty() {
+            all_lines.push(Line::from(""));
+            all_lines.extend(process_chunk(chunk));
+        }
+    }
+
+    all_lines
+}
+
+/// Render a parsed GFM table as Unicode box-drawing art into ratatui `Line`s.
+///
+/// Column widths are sized to the widest content in each column, then
+/// proportionally shrunk if the total exceeds `max_w`. Cell content that is
+/// still too wide is truncated with `…`.
+fn render_table_art_lines(
+    alignments: &[pulldown_cmark::Alignment],
+    header: &[String],
+    rows: &[Vec<String>],
+    max_w: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    use pulldown_cmark::Alignment;
+
+    let col_count = header
+        .len()
+        .max(rows.iter().map(|r| r.len()).max().unwrap_or(0));
+    if col_count == 0 {
+        return Vec::new();
+    }
+
+    // Natural column widths: max(header display width, widest data cell), min 1.
+    let mut col_widths: Vec<usize> = (0..col_count)
+        .map(|i| {
+            let h = header.get(i).map(|s| UnicodeWidthStr::width(s.as_str())).unwrap_or(0);
+            let d = rows
+                .iter()
+                .map(|r| r.get(i).map(|s| UnicodeWidthStr::width(s.as_str())).unwrap_or(0))
+                .max()
+                .unwrap_or(0);
+            h.max(d).max(1)
+        })
+        .collect();
+
+    // Total table width = 1 (left border) + Σ(col_w + 2 padding + 1 right border).
+    let table_w: usize = 1 + col_widths.iter().map(|w| w + 3).sum::<usize>();
+
+    if table_w > max_w {
+        let available = max_w.saturating_sub(col_count * 3 + 1);
+        let total_natural: usize = col_widths.iter().sum();
+        if available > 0 && total_natural > 0 {
+            let mut new_widths: Vec<usize> = col_widths
+                .iter()
+                .map(|&w| ((w * available) / total_natural).max(1))
+                .collect();
+            // Distribute any rounding remainder to the first column.
+            let used: usize = new_widths.iter().sum();
+            if used < available {
+                new_widths[0] += available - used;
+            }
+            col_widths = new_widths;
+        } else {
+            col_widths = vec![1; col_count];
+        }
+    }
+
+    let border_style = Style::default().fg(theme.text_subtle);
+    let header_style = Style::default().add_modifier(Modifier::BOLD);
+
+    let trunc = |s: &str, max: usize| -> String {
+        if UnicodeWidthStr::width(s) <= max {
+            s.to_string()
+        } else {
+            let end = split_at_width(s, max.saturating_sub(1)); // leave one column for '…'
+            format!("{}…", &s[..end])
+        }
+    };
+
+    let pad_cell = |s: &str, w: usize, align: Alignment| -> String {
+        let n = UnicodeWidthStr::width(s);
+        let padding = w.saturating_sub(n);
+        match align {
+            Alignment::Right => format!("{}{}", " ".repeat(padding), s),
+            Alignment::Center => {
+                let left = padding / 2;
+                format!("{}{}{}", " ".repeat(left), s, " ".repeat(padding - left))
+            }
+            _ => format!("{}{}", s, " ".repeat(padding)),
+        }
+    };
+
+    let mut out: Vec<Line<'static>> = Vec::new();
+
+    // ┌───┬───┐
+    {
+        let mut spans = vec![Span::styled("┌".to_string(), border_style)];
+        for (i, &w) in col_widths.iter().enumerate() {
+            spans.push(Span::styled("─".repeat(w + 2), border_style));
+            spans.push(Span::styled(
+                if i + 1 < col_count { "┬" } else { "┐" }.to_string(),
+                border_style,
+            ));
+        }
+        out.push(Line::from(spans));
+    }
+
+    // │ Header │ Header │
+    {
+        let mut spans = vec![Span::styled("│".to_string(), border_style)];
+        for (i, &w) in col_widths.iter().enumerate() {
+            let cell = trunc(header.get(i).map(|s| s.as_str()).unwrap_or(""), w);
+            let align = alignments.get(i).copied().unwrap_or(Alignment::None);
+            let padded = pad_cell(&cell, w, align);
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(padded, header_style));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled("│".to_string(), border_style));
+        }
+        out.push(Line::from(spans));
+    }
+
+    // ├───┼───┤
+    {
+        let mut spans = vec![Span::styled("├".to_string(), border_style)];
+        for (i, &w) in col_widths.iter().enumerate() {
+            spans.push(Span::styled("─".repeat(w + 2), border_style));
+            spans.push(Span::styled(
+                if i + 1 < col_count { "┼" } else { "┤" }.to_string(),
+                border_style,
+            ));
+        }
+        out.push(Line::from(spans));
+    }
+
+    // │ cell │ cell │
+    for row in rows {
+        let mut spans = vec![Span::styled("│".to_string(), border_style)];
+        for (i, &w) in col_widths.iter().enumerate() {
+            let cell = trunc(row.get(i).map(|s| s.as_str()).unwrap_or(""), w);
+            let align = alignments.get(i).copied().unwrap_or(Alignment::None);
+            let padded = pad_cell(&cell, w, align);
+            spans.push(Span::raw(" "));
+            spans.push(Span::raw(padded));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled("│".to_string(), border_style));
+        }
+        out.push(Line::from(spans));
+    }
+
+    // └───┴───┘
+    {
+        let mut spans = vec![Span::styled("└".to_string(), border_style)];
+        for (i, &w) in col_widths.iter().enumerate() {
+            spans.push(Span::styled("─".repeat(w + 2), border_style));
+            spans.push(Span::styled(
+                if i + 1 < col_count { "┴" } else { "┘" }.to_string(),
+                border_style,
+            ));
+        }
+        out.push(Line::from(spans));
+    }
+
+    out
+}
+
 fn line_to_owned(line: Line<'_>) -> Line<'static> {
     let style = line.style;
     let alignment = line.alignment;
@@ -894,7 +1192,7 @@ fn span_to_owned(span: Span<'_>) -> Span<'static> {
 fn line_char_width(line: &Line<'_>) -> usize {
     line.spans
         .iter()
-        .map(|s| s.content.chars().count())
+        .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
         .sum()
 }
 
@@ -924,15 +1222,11 @@ fn wrap_styled_line(line: Line<'static>, max_w: usize) -> Vec<Line<'static>> {
                 continue;
             }
 
-            let chunk_end = remaining
-                .char_indices()
-                .nth(space_left)
-                .map(|(i, _)| i)
-                .unwrap_or(remaining.len());
+            let chunk_end = split_at_width(remaining, space_left);
 
             let chunk = &remaining[..chunk_end];
             current_spans.push(Span::styled(chunk.to_string(), style));
-            current_len += chunk.chars().count();
+            current_len += UnicodeWidthStr::width(chunk);
             remaining = &remaining[chunk_end..];
 
             if !remaining.is_empty() {
@@ -959,6 +1253,24 @@ fn wrap_styled_line(line: Line<'static>, max_w: usize) -> Vec<Line<'static>> {
     result
 }
 
+/// Byte index at which `s` should be split so the prefix fits in `max_cols` terminal
+/// columns. Wide characters (emoji, CJK, …) count as 2 columns; combining/control
+/// chars count as 0 or 1.  Always advances by at least one character so callers
+/// cannot loop infinitely when a single character exceeds the budget.
+fn split_at_width(s: &str, max_cols: usize) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    let mut cols = 0usize;
+    for (byte_idx, ch) in s.char_indices() {
+        let w = ch.width().unwrap_or(1);
+        if cols + w > max_cols {
+            // Force advance if nothing has fit yet to prevent infinite loops.
+            return if cols == 0 { byte_idx + ch.len_utf8() } else { byte_idx };
+        }
+        cols += w;
+    }
+    s.len()
+}
+
 fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {
         return vec![text.to_string()];
@@ -966,13 +1278,12 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut remaining = text;
     loop {
-        match remaining.char_indices().nth(max_width).map(|(i, _)| i) {
-            Some(byte_idx) => {
-                lines.push(remaining[..byte_idx].to_string());
-                remaining = &remaining[byte_idx..];
-            }
-            None => break,
+        let byte_idx = split_at_width(remaining, max_width);
+        if byte_idx >= remaining.len() {
+            break;
         }
+        lines.push(remaining[..byte_idx].to_string());
+        remaining = &remaining[byte_idx..];
     }
     lines.push(remaining.to_string());
     lines

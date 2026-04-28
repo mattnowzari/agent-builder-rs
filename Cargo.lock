@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dotenvy",
+ "pulldown-cmark",
  "ratatui",
  "ratatui-explorer",
  "reqwest",
@@ -16,6 +17,7 @@ dependencies = [
  "serde_yaml",
  "tokio",
  "tui-markdown",
+ "unicode-width",
 ]
 
 [[package]]
