@@ -473,9 +473,13 @@ fn render_chat_input(frame: &mut Frame, model: &Model, style: Style, is_focused:
     let inner = input_block.inner(area);
 
     let buf = session.map(|s| s.input_buffer.as_str()).unwrap_or("");
-    let input_widget = Paragraph::new(buf)
-        .block(input_block)
-        .wrap(Wrap { trim: false });
+    // Pre-wrap using the same char-count algorithm as cursor_column/row_in_area so
+    // that the rendered line breaks match the cursor position calculations exactly.
+    // Ratatui's Wrap widget breaks at word boundaries, which diverges from the
+    // simple `char_count % width` math and causes the cursor to appear in the wrong
+    // column/row when the text contains spaces.
+    let lines = char_wrap_input(buf, inner.width as usize);
+    let input_widget = Paragraph::new(lines).block(input_block);
 
     frame.render_widget(input_widget, area);
 
@@ -489,6 +493,27 @@ fn render_chat_input(frame: &mut Frame, model: &Model, style: Style, is_focused:
 
         frame.set_cursor_position(Position::new(inner.x + cursor_col, inner.y + cursor_row));
     }
+}
+
+/// Splits `s` into display lines of exactly `width` characters each.
+/// This matches the char-count arithmetic used by `cursor_column_in_area` and
+/// `cursor_row_in_area`, ensuring rendered line breaks and cursor position agree.
+fn char_wrap_input(s: &str, width: usize) -> Vec<Line<'static>> {
+    if width == 0 {
+        return vec![Line::from(s.to_string())];
+    }
+    let chars: Vec<char> = s.chars().collect();
+    if chars.is_empty() {
+        return vec![Line::from(String::new())];
+    }
+    let mut lines = Vec::new();
+    let mut start = 0;
+    while start < chars.len() {
+        let end = (start + width).min(chars.len());
+        lines.push(Line::from(chars[start..end].iter().collect::<String>()));
+        start = end;
+    }
+    lines
 }
 
 fn cursor_column_in_area(s: &str, byte_cursor: usize, width: u16) -> u16 {
